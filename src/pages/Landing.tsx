@@ -69,7 +69,8 @@ export default function Landing({ onStart, onSample, onSignIn, signedIn }: Landi
             <span className="sticker rotate-2 !bg-surface !text-ink">60 seconds, tops</span>
           </div>
           <h1 className="mt-8 text-[3.25rem] font-extrabold leading-[0.95] tracking-tight md:text-7xl lg:text-[5.25rem]">
-            Stop hoping and start posting.
+            <span className="block">STOP HOPING.</span>
+            <span className="block">START POSTING.</span>
           </h1>
           <div className="mt-6 -ml-1">
             <span className="neon-plate !px-6 !py-2">
