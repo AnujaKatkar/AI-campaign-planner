@@ -177,7 +177,7 @@ export default function BriefWizard({ signedIn, onNeedAuth, onCreated, onExit }:
   if (generating) {
     return (
       <div className="mx-auto flex max-w-xl flex-col px-5 py-16 md:py-24" role="status" aria-live="polite">
-        <span className="sticker self-start -rotate-2">Cooking</span>
+        <span className="sticker self-start -rotate-2">Making magic happen…</span>
         <h1 className="mt-6 text-4xl font-extrabold md:text-5xl">Flaunting {values.business_name}…</h1>
         <div className="mt-8 h-4 w-full overflow-hidden rounded-full border-2 border-ink bg-blush">
           <div className="fill-bar h-full rounded-full bg-honey" />

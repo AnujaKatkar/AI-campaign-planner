@@ -22,7 +22,7 @@ export default function BriefTab({ campaign }: { campaign: CampaignDetail }) {
   const recipe = STORY_RECIPES.find((r) => r.value === campaign.story_recipe);
   const asText = [
     `Creative brief: ${campaign.name}`,
-    recipe && campaign.story_recipe !== 'auto' ? `Story recipe: ${recipe.label}` : '',
+    recipe && campaign.story_recipe !== 'auto' ? `Storyline: ${recipe.label}` : '',
     ...ROWS.map(({ key, label }) => {
       const v = brief[key];
       return `${label}: ${Array.isArray(v) ? v.map((x) => `\n - ${x}`).join('') : v}`;
@@ -39,7 +39,7 @@ export default function BriefTab({ campaign }: { campaign: CampaignDetail }) {
           <h3 className="mt-1 text-2xl font-extrabold">{campaign.name}</h3>
           {recipe && (
             <p className="mt-1 text-sm">
-              Story recipe: <strong>{recipe.label}</strong>
+              Storyline: <strong>{recipe.label}</strong>
               <span className="text-muted"> · {recipe.hint}</span>
             </p>
           )}

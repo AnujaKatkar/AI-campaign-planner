@@ -64,11 +64,11 @@ export const STEP_COPY: Record<StepId, { question: string; why: string; placehol
     why: 'We only plan posts for the places you pick.',
   },
   tone: {
-    question: 'How do you sound?',
+    question: 'What tone fits your brand?',
     why: 'Every line of copy will match this voice.',
   },
   story_recipe: {
-    question: 'Pick a story recipe',
+    question: 'Pick a storyline',
     why: 'The shape every post follows. Not sure? Let Flaunt pick.',
     optional: true,
   },

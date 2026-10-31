@@ -51,11 +51,11 @@ type Tab = 'calendar' | 'results' | 'ideas' | 'scripts' | 'copy' | 'brief';
 
 const TABS: { id: Tab; label: string; blurb: string }[] = [
   { id: 'calendar', label: 'Calendar', blurb: 'Your posts, week by week. Tick “Posted” as you go; click any post to edit it.' },
-  { id: 'results', label: 'Results', blurb: 'Adds up the numbers you log on each post, and shows if you’re on track for your goal.' },
   { id: 'ideas', label: 'Ideas', blurb: 'Spare ideas to swipe through. Keep the good ones and drop them onto the calendar.' },
   { id: 'scripts', label: 'Video scripts', blurb: 'Shot-by-shot scripts for 6, 15 and 30 second video ads.' },
   { id: 'copy', label: 'Copy', blurb: 'Headlines, ad text, subject lines and hashtags, ready to paste.' },
   { id: 'brief', label: 'Creative brief', blurb: 'The one-page plan to hand to anyone helping you: designer, freelancer, nephew.' },
+  { id: 'results', label: 'Results', blurb: 'Adds up the numbers you log on each post, and shows if you’re on track for your goal.' },
 ];
 
 type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' };

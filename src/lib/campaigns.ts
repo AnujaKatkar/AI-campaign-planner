@@ -1,4 +1,4 @@
-import { supabase, supabaseConfigured } from '@/lib/supabase';
+import { signOut, supabase, supabaseConfigured } from '@/lib/supabase';
 import { todayIso } from '@/lib/schedule';
 
 export type Goal = 'awareness' | 'leads' | 'sales' | 'launch' | 'event' | 'retention';
@@ -161,11 +161,29 @@ async function readFunctionError(error: unknown): Promise<string> {
   return GENERIC_ERROR;
 }
 
+const SESSION_EXPIRED = 'Your sign-in expired. Sign in again to use AI. Your answers stay right where they are.';
+
+function isUnauthorized(error: unknown): boolean {
+  const response = (error as { context?: unknown } | null)?.context;
+  return response instanceof Response && response.status === 401;
+}
+
 async function invoke<T>(body: Record<string, unknown>): Promise<T> {
   if (!supabaseConfigured) throw new Error(NOT_CONNECTED);
   const { data: sessionData } = await supabase.auth.getSession();
   if (!sessionData.session) throw new Error('Sign in to use AI. Your plan stays right where it is.');
-  const { data, error } = await supabase.functions.invoke('flaunt-generate', { body });
+  let { data, error } = await supabase.functions.invoke('flaunt-generate', { body });
+  if (isUnauthorized(error)) {
+    // The saved session can outlive the server's copy (signed out elsewhere, or revoked).
+    // Refresh once; if that fails too, sign out here so the app stops showing a signed-in state.
+    const { error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError) {
+      await signOut();
+      throw new Error(SESSION_EXPIRED);
+    }
+    ({ data, error } = await supabase.functions.invoke('flaunt-generate', { body }));
+    if (isUnauthorized(error)) throw new Error(SESSION_EXPIRED);
+  }
   if (error) throw new Error(await readFunctionError(error));
   return data as T;
 }
