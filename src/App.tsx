@@ -9,13 +9,15 @@ import SiteHeader from '@/components/SiteHeader';
 import SiteFooter from '@/components/SiteFooter';
 import { ToastProvider } from '@/components/Toast';
 import { useSession } from '@/hooks/useSession';
-import { supabase } from '@/lib/supabase';
+import { openedFromPasswordReset, signOut } from '@/lib/supabase';
 
 type Screen = 'landing' | 'auth' | 'brief' | 'library' | 'campaign' | 'how';
 
 function App() {
   const { session, loading } = useSession();
-  const [screen, setScreen] = useState<Screen>('landing');
+  // A reset-password email link lands here signed in, so go straight to choosing a new password.
+  const [resettingPassword, setResettingPassword] = useState(openedFromPasswordReset);
+  const [screen, setScreen] = useState<Screen>(openedFromPasswordReset ? 'auth' : 'landing');
   const [previous, setPrevious] = useState<Screen>('landing');
   const [afterAuth, setAfterAuth] = useState<Screen>('library');
   const [source, setSource] = useState<WorkspaceSource | null>(null);
@@ -52,7 +54,7 @@ function App() {
   }
 
   async function handleSignOut() {
-    await supabase.auth.signOut();
+    await signOut();
     go('landing');
   }
 
@@ -77,7 +79,20 @@ function App() {
           {screen === 'landing' && (
             <Landing signedIn={!!session} onStart={() => go('brief')} onSample={openSample} onSignIn={() => requireSignIn('library')} />
           )}
-          {screen === 'auth' && <AuthPage onAuthed={() => go(afterAuth)} onBack={() => go(previous === 'auth' ? 'landing' : previous)} />}
+          {screen === 'auth' && (
+            <AuthPage
+              key={resettingPassword ? 'reset' : 'auth'}
+              initialMode={resettingPassword ? 'reset' : undefined}
+              onAuthed={() => {
+                setResettingPassword(false);
+                go(afterAuth);
+              }}
+              onBack={() => {
+                setResettingPassword(false);
+                go(previous === 'auth' ? 'landing' : previous);
+              }}
+            />
+          )}
           {screen === 'brief' && (
             <BriefWizard
               signedIn={!!session}
