@@ -295,4 +295,6 @@ export const sampleStore: CampaignStore = {
   updateCampaign: async () => {},
   updateAsset: async () => {},
   createItem: async (item) => ({ ...item, id: `item-${Date.now()}` }),
+  createAsset: async (asset) => ({ ...asset, id: `asset-${Date.now()}` }),
+  deleteAsset: async () => {},
 };

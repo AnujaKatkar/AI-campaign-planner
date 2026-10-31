@@ -39,9 +39,10 @@ type Task =
   | { task: "brief_chat"; brief: Partial<Brief>; history: { role: "user" | "assistant"; text: string }[]; message: string };
 
 type ChatPlan = {
-  campaign: CampaignContext & { name?: string; big_idea?: string | null; start_date: string; duration_weeks: number; channels: string[] };
+  campaign: CampaignContext & { name?: string; big_idea?: string | null; tagline?: string | null; start_date: string; duration_weeks: number; channels: string[] };
   phases: { name: string; starts_on: string; ends_on: string }[];
   items: Record<string, unknown>[];
+  scripts?: Record<string, unknown>[];
 };
 
 type BriefField = "business_name" | "business_brief" | "target_audience" | "offer";
@@ -261,6 +262,11 @@ Deno.serve(async (req) => {
 // ---------- Small AI tasks used by the workspace -------------------------
 const nullable = (type: string, extra: Record<string, unknown> = {}) => ({ type: [type, "null"], ...extra });
 
+const SCRIPT_SCHEMA = obj({
+  title: str, platform: str, length_seconds: { type: "integer" }, cta: str,
+  scenes: { type: "array", items: obj({ time: str, visual: str, voiceover: str, on_screen_text: str }) },
+});
+
 const TASK_SCHEMAS = {
   rewrite_item: obj({ item: obj({ title: str, hook: str, body: str, cta: str }) }),
   more_copy: obj({ lines: strArr }),
@@ -268,6 +274,10 @@ const TASK_SCHEMAS = {
   refine_brief_field: obj({ suggestions: strArr }),
   plan_chat: obj({
     reply: str,
+    campaign: obj({
+      name: nullable("string"), tagline: nullable("string"), big_idea: nullable("string"),
+      offer: nullable("string"), duration_weeks: nullable("integer"),
+    }),
     changes: {
       type: "array",
       items: obj({
@@ -277,6 +287,15 @@ const TASK_SCHEMAS = {
         fields: obj(Object.fromEntries(
           ["title", "hook", "body", "cta", "visual", "format", "channel", "scheduled_on"].map((k) => [k, { type: ["string", "null"] }]),
         )),
+      }),
+    },
+    scripts: {
+      type: "array",
+      items: obj({
+        op: { type: "string", enum: ["update", "create", "delete"] },
+        ref: { type: ["string", "null"] },
+        reason: str,
+        script: { anyOf: [SCRIPT_SCHEMA, { type: "null" }] },
       }),
     },
   }),
@@ -322,14 +341,28 @@ Owner: ${clip(t.message, 1200)}`;
 }
 
 const CHAT_SYSTEM = `You are Flaunt, a friendly senior marketer who helps a small-business owner adjust their campaign plan.
-You can answer questions about the plan and propose edits to its posts.
+You can answer questions about the plan and propose edits to its posts, campaign details and video scripts.
 Rules:
-- reply: 1–4 short sentences in plain English, no jargon. If you propose changes, say what you changed and why in one line.
-- Only propose changes when the owner asks for a change (or clearly agrees to one). For questions, answer and leave changes empty.
+- reply: 1–4 short sentences in plain English, no jargon.
+- When the owner asks for a change, put every change in this same reply. Don't ask for permission first.
+- You can't change anything yourself: the owner applies your changes by accepting the cards shown under your reply.
+  Never say you made, added or moved anything. Say what you're suggesting and "accept the cards below to apply".
+- For questions, answer, leave changes empty and every campaign field null.
+- campaign: only the campaign details the owner wants changed (name, tagline, big idea, offer, duration_weeks 1–26); everything else null.
+  When duration_weeks grows, also create posts for the new weeks; when it shrinks, delete posts after the new end.
+- scripts: video ad scripts. "update" gives the script's ref and the WHOLE new script; "create" has ref null and a whole script;
+  "delete" gives the ref and script null. Each scene: time (e.g. "0–2s"), visual, voiceover, on_screen_text. Keep scenes inside length_seconds.
+- You can change posts, those campaign details and video scripts. You can't change anything else from this chat; if asked, say so plainly
+  and point to where it can be done, using only these real places:
+  ideas: the Ideas tab (keep, drop or put an idea on the calendar); copy lines: the Copy tab ("more like these");
+  results: open a post in the Calendar and fill in "How did it do?"; the goal number: the Results tab.
+  Phases, goal type, channels and tone can't be changed after the campaign is made; say so, and offer to adjust the posts instead.
+  Never invent a screen or setting that isn't in this list.
 - op "update": ref is the post's ref. In fields, give ONLY the fields that change; every other field is null.
 - op "create": ref is null. Give title, scheduled_on, channel and format, plus hook, body and cta when useful.
 - op "delete": ref is the post's ref; all fields null.
-- scheduled_on is YYYY-MM-DD within the campaign dates. channel must be one of the campaign's channels.
+- scheduled_on is YYYY-MM-DD from the start date to the end date (the new end date if you change duration_weeks).
+- channel must be one of the campaign's channels.
 - Format names in plain words: "Short video (Reel)", "Swipe post (Carousel)", "Story poll", "Photo post", "Email".
 - body: 2–4 sentences ready to paste, ending with the call to action. Keep the campaign's tone and goal.
 - Don't change posts with status "done" unless the owner names them. No invented statistics, testimonials or claims.
@@ -343,14 +376,17 @@ function chatPrompt(t: Extract<Task, { task: "plan_chat" }>): string {
   );
   const history = (t.history ?? []).slice(-10).map((m) => `${m.role === "user" ? "Owner" : "Flaunt"}: ${clip(m.text, 1000)}`).join("\n");
   return `Campaign: ${c.name ?? ""} for ${c.business_name}
-Big idea: ${c.big_idea ?? "none"}
+Big idea: ${c.big_idea ?? "none"} · Tagline: ${c.tagline ?? "none"}
 Audience: ${c.target_audience}
 Goal: ${c.goal} · Tone: ${c.tone ?? "warm"} · Offer: ${c.offer ?? "none"}
-Runs ${c.start_date} for ${c.duration_weeks} weeks · Channels: ${(c.channels ?? []).join(", ")}
+Runs ${c.start_date} to ${addDays(c.start_date, c.duration_weeks * 7 - 1)} (${c.duration_weeks} weeks) · Channels: ${(c.channels ?? []).join(", ")}
 Phases: ${(t.plan.phases ?? []).map((p) => `${p.name} (${p.starts_on} to ${p.ends_on})`).join("; ")}
 
 Posts (JSON, one per line):
 ${items.map((it) => JSON.stringify(it)).join("\n")}
+
+Video scripts (JSON, one per line):
+${(t.plan.scripts ?? []).slice(0, 20).map((sc) => JSON.stringify(sc).slice(0, 4000)).join("\n") || "(none)"}
 ${history ? `\nConversation so far:\n${history}\n` : ""}${t.focus ? `\nThe owner is asking about post ${t.focus}.` : ""}
 Owner: ${clip(t.message, 1000)}`;
 }

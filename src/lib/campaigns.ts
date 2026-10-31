@@ -137,8 +137,12 @@ export type CampaignStore = {
   createItem: (item: NewItem) => Promise<CalendarItem>;
   deleteItem: (id: string) => Promise<void>;
   updateCampaign: (patch: Partial<Campaign>) => Promise<void>;
-  updateAsset: (id: string, patch: { kept?: boolean; content?: unknown }) => Promise<void>;
+  updateAsset: (id: string, patch: { kept?: boolean; content?: unknown; title?: string | null }) => Promise<void>;
+  createAsset: (asset: NewAsset) => Promise<Asset>;
+  deleteAsset: (id: string) => Promise<void>;
 };
+
+export type NewAsset = Omit<Extract<Asset, { kind: 'ad_script' }>, 'id'>;
 
 export const GENERIC_ERROR = 'Something went wrong on our side. Check your connection and try again.';
 export const SAVE_ERROR = "Couldn't save that change. Check your connection and try again.";
@@ -239,7 +243,7 @@ export async function refineBriefField(
 }
 
 /** Sends one chat turn to the plan assistant. The reply is checked and turned into edits in lib/assistant. */
-export async function planChat(payload: Record<string, unknown>): Promise<{ reply?: unknown; changes?: unknown }> {
+export async function planChat(payload: Record<string, unknown>): Promise<{ reply?: unknown; campaign?: unknown; changes?: unknown; scripts?: unknown }> {
   return invoke({ task: 'plan_chat', ...payload });
 }
 
@@ -302,6 +306,19 @@ export function remoteStore(campaignId: string): CampaignStore {
     },
     async updateAsset(id, patch) {
       const { error } = await supabase.from('campaign_assets').update(patch).eq('id', id);
+      if (error) throw new Error(SAVE_ERROR);
+    },
+    async createAsset(asset) {
+      const { data, error } = await supabase
+        .from('campaign_assets')
+        .insert({ ...asset, campaign_id: campaignId })
+        .select('id, kind, title, content, kept')
+        .single();
+      if (error || !data) throw new Error(SAVE_ERROR);
+      return data as Asset;
+    },
+    async deleteAsset(id) {
+      const { error } = await supabase.from('campaign_assets').delete().eq('id', id);
       if (error) throw new Error(SAVE_ERROR);
     },
   };

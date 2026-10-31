@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react';
-import { AlertCircle, ArrowRight, Check, Loader2, Mic, Pencil, Plus, RotateCcw, Send, Sparkles, Square, Trash2, Undo2, X } from 'lucide-react';
+import { AlertCircle, ArrowRight, CalendarRange, Check, Clapperboard, Info, Loader2, Mic, Pencil, Plus, RotateCcw, Send, Sparkles, Square, Trash2, Undo2, X } from 'lucide-react';
 import ChannelChip from '@/components/ChannelChip';
 import Drawer from '@/components/Drawer';
 import { appendSpoken, useSpeechRecognition } from '@/hooks/useSpeechRecognition';
-import { FIELD_LABELS, askFlaunt, changedFields, newKey, type ChatMessage, type PlanOp, type ProposedChange } from '@/lib/assistant';
-import type { CampaignDetail, NewItem } from '@/lib/campaigns';
+import { FIELD_LABELS, askFlaunt, changedFields, newKey, type CampaignPatch, type ChatMessage, type PlanOp, type ProposedChange } from '@/lib/assistant';
+import type { AdScript, CampaignDetail, NewItem } from '@/lib/campaigns';
 import { channelMeta } from '@/lib/channels';
-import { formatShortDate } from '@/lib/schedule';
+import { addDaysIso, formatShortDate } from '@/lib/schedule';
 
 type AssistantPanelProps = {
   campaign: CampaignDetail;
@@ -24,6 +24,7 @@ const STARTERS = [
   'Make the hooks in week 1 punchier',
   'Move all TikTok posts to weekends',
   'Add 2 email posts before the big reveal',
+  'Make the 15-second video script funnier',
   'Which post should I make first this week?',
 ];
 
@@ -67,7 +68,12 @@ export default function AssistantPanel({ campaign, messages, setMessages, focusI
     );
   }
 
-  async function accept(msgKey: string, changes: ProposedChange[]) {
+  async function accept(msgKey: string, picked: ProposedChange[]) {
+    // A post in weeks the campaign doesn't have yet needs that reply's length change too.
+    const lastDay = addDaysIso(campaign.start_date, campaign.duration_weeks * 7 - 1);
+    const outside = picked.some((c) => (c.op.kind === 'create' ? c.op.item.scheduled_on : c.op.kind === 'update' ? c.op.patch.scheduled_on : '')! > lastDay);
+    const details = messages.find((m) => m.key === msgKey)?.changes?.find((c) => c.op.kind === 'campaign' && c.state === 'pending');
+    const changes = outside && details && !picked.includes(details) ? [details, ...picked] : picked;
     const keys = changes.map((c) => c.key);
     setChanges(msgKey, keys, (c) => ({ ...c, state: 'applying' }));
     const undos = await onApply(changes.map((c) => c.op));
@@ -209,6 +215,13 @@ export default function AssistantPanel({ campaign, messages, setMessages, focusI
                   onOpenItem={onOpenItem}
                 />
               )}
+              {!!m.skipped && (
+                <p className="flex items-start gap-2 text-sm text-muted">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                  {m.skipped === 1 ? '1 suggestion was' : `${m.skipped} suggestions were`} left out because {m.skipped === 1 ? 'it' : 'they'} didn&apos;t
+                  fit the plan (a date outside the campaign, an unknown post or channel). Try asking again more specifically.
+                </p>
+              )}
             </div>
           ),
         )}
@@ -258,6 +271,10 @@ const OP_STYLE = {
   update: { icon: Pencil, label: 'Edit', tone: 'text-teal' },
   create: { icon: Plus, label: 'New post', tone: 'text-sage' },
   delete: { icon: Trash2, label: 'Remove', tone: 'text-rose' },
+  campaign: { icon: CalendarRange, label: 'Campaign details', tone: 'text-honey' },
+  script_update: { icon: Clapperboard, label: 'Edit video script', tone: 'text-teal' },
+  script_create: { icon: Clapperboard, label: 'New video script', tone: 'text-sage' },
+  script_delete: { icon: Trash2, label: 'Remove video script', tone: 'text-rose' },
 };
 
 function ChangeCard({
@@ -278,7 +295,15 @@ function ChangeCard({
   const created: NewItem | null = op.kind === 'create' ? op.item : null;
   const channel = created?.channel ?? before?.channel ?? '';
   const date = created?.scheduled_on ?? before?.scheduled_on ?? '';
-  const title = created?.title ?? before?.title ?? '';
+  const script = op.kind === 'script_update' || op.kind === 'script_create' ? op.script : null;
+  const title =
+    op.kind === 'campaign'
+      ? 'Change your campaign'
+      : script
+        ? `${script.title} · ${script.length_seconds}s`
+        : op.kind === 'script_delete'
+          ? `${change.beforeScript?.title ?? 'Script'} · ${change.beforeScript?.length_seconds ?? '?'}s`
+          : (created?.title ?? before?.title ?? '');
   const fields = changedFields(change);
   const muted = state === 'rejected';
 
@@ -308,6 +333,34 @@ function ChangeCard({
               <dd className="mt-0.5">
                 {before?.[f] && <span className="block text-muted line-through decoration-rose/60">{display(f, before[f] as string)}</span>}
                 <span className="block font-medium">{display(f, op.patch[f] as string)}</span>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {script && (
+        <div className="mt-3 space-y-3">
+          <ScriptScenes script={script} />
+          {op.kind === 'script_update' && change.beforeScript && (
+            <details className="text-sm">
+              <summary className="cursor-pointer font-semibold text-muted">See the current version</summary>
+              <div className="mt-2 opacity-70">
+                <ScriptScenes script={change.beforeScript} />
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+      {op.kind === 'campaign' && (
+        <dl className="mt-3 space-y-2 text-sm">
+          {(Object.keys(op.patch) as (keyof CampaignPatch)[]).map((k) => (
+            <div key={k}>
+              <dt className="eyebrow">{CAMPAIGN_LABELS[k]}</dt>
+              <dd className="mt-0.5">
+                {change.beforeCampaign?.[k] != null && (
+                  <span className="block text-muted line-through decoration-rose/60">{campaignValue(k, change.beforeCampaign[k])}</span>
+                )}
+                <span className="block font-medium">{campaignValue(k, op.patch[k])}</span>
               </dd>
             </div>
           ))}
@@ -359,6 +412,39 @@ function ChangeCard({
       </div>
     </div>
   );
+}
+
+function ScriptScenes({ script }: { script: AdScript }) {
+  return (
+    <div className="space-y-2 text-sm">
+      <p className="text-muted">
+        {script.platform}
+        {script.cta && <> · ends with &ldquo;{script.cta}&rdquo;</>}
+      </p>
+      <ol className="space-y-2">
+        {script.scenes.map((sc, i) => (
+          <li key={i} className="rounded-xl bg-blush/40 px-3 py-2">
+            <span className="font-mono text-xs font-bold">{sc.time}</span>
+            {sc.visual && <p><span className="font-semibold">Visual:</span> {sc.visual}</p>}
+            {sc.voiceover && <p><span className="font-semibold">Voiceover:</span> {sc.voiceover}</p>}
+            {sc.on_screen_text && <p><span className="font-semibold">On screen:</span> {sc.on_screen_text}</p>}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+const CAMPAIGN_LABELS: Record<keyof CampaignPatch, string> = {
+  name: 'Campaign name',
+  tagline: 'Tagline',
+  big_idea: 'Big idea',
+  offer: 'Offer',
+  duration_weeks: 'Length',
+};
+
+function campaignValue(key: keyof CampaignPatch, value: unknown): string {
+  return key === 'duration_weeks' ? `${value} weeks` : String(value ?? '');
 }
 
 function display(field: string, value: string): string {

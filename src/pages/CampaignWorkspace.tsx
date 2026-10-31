@@ -72,7 +72,8 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
   const [showRecap, setShowRecap] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantFocus, setAssistantFocus] = useState<string | null>(null);
-  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const chatKey = `flaunt.askChat.${source.kind === 'remote' ? source.id : 'sample'}`;
+  const [chat, setChat] = useState<ChatMessage[]>(() => loadChat(chatKey));
   const campaignRef = useRef(campaign);
   campaignRef.current = campaign;
 
@@ -105,6 +106,15 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
   useEffect(() => {
     if (isSample && campaign) saveSample(campaign);
   }, [isSample, campaign]);
+
+  useEffect(() => {
+    try {
+      if (chat.length) localStorage.setItem(chatKey, JSON.stringify(chat.slice(-MAX_SAVED_MESSAGES)));
+      else localStorage.removeItem(chatKey);
+    } catch {
+      // The chat just won't survive a reload.
+    }
+  }, [chat, chatKey]);
 
   const apply = useCallback((fn: (c: CampaignDetail) => CampaignDetail) => setCampaign((c) => (c ? fn(c) : c)), []);
 
@@ -215,47 +225,81 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
     const start = campaignRef.current;
     if (!start) return ops.map(() => null);
     let items = start.items;
+    let assets = start.assets;
+    let details: Partial<Campaign> = {};
     const undos: (PlanOp | null)[] = [];
     let failed = 0;
-    for (const op of ops) {
+    // Campaign details go first, so posts in newly added weeks land inside the campaign.
+    const ordered = ops.map((op, i) => ({ op, i })).sort((a, b) => Number(b.op.kind === 'campaign') - Number(a.op.kind === 'campaign'));
+    for (const { op, i } of ordered) {
       try {
-        if (op.kind === 'update') {
+        if (op.kind === 'campaign') {
+          const current = { ...start, ...details };
+          await store.updateCampaign(op.patch);
+          undos[i] = { kind: 'campaign', patch: Object.fromEntries(Object.keys(op.patch).map((k) => [k, current[k as keyof Campaign]])) };
+          details = { ...details, ...op.patch };
+        } else if (op.kind === 'update') {
           const current = items.find((i) => i.id === op.id);
           if (!current) throw new Error('missing');
           const patch: ItemPatch = { ...op.patch };
           if (patch.scheduled_on) patch.phase_id = phaseForDate(start.phases, patch.scheduled_on)?.id ?? null;
           await store.updateItem(op.id, patch);
           const previous = Object.fromEntries(Object.keys(patch).map((k) => [k, current[k as keyof CalendarItem]])) as ItemPatch;
-          items = items.map((i) => (i.id === op.id ? { ...i, ...patch } : i));
-          undos.push({ kind: 'update', id: op.id, patch: previous });
+          items = items.map((it) => (it.id === op.id ? { ...it, ...patch } : it));
+          undos[i] = { kind: 'update', id: op.id, patch: previous };
         } else if (op.kind === 'create') {
           const draft = { ...op.item, phase_id: phaseForDate(start.phases, op.item.scheduled_on)?.id ?? null, sort: items.length };
           const created = await store.createItem(draft);
           items = [...items, created];
-          undos.push({ kind: 'delete', id: created.id });
+          undos[i] = { kind: 'delete', id: created.id };
+        } else if (op.kind === 'script_update') {
+          const current = assets.find((a) => a.id === op.id);
+          if (current?.kind !== 'ad_script') throw new Error('missing');
+          await store.updateAsset(op.id, { content: op.script, title: op.script.title });
+          assets = assets.map((a) => (a.id === op.id ? { ...current, content: op.script, title: op.script.title } : a));
+          undos[i] = { kind: 'script_update', id: op.id, script: current.content };
+        } else if (op.kind === 'script_create') {
+          const created = await store.createAsset({ kind: 'ad_script', title: op.script.title, content: op.script, kept: true });
+          assets = [...assets, created];
+          undos[i] = { kind: 'script_delete', id: created.id };
+        } else if (op.kind === 'script_delete') {
+          const current = assets.find((a) => a.id === op.id);
+          if (current?.kind !== 'ad_script') throw new Error('missing');
+          await store.deleteAsset(op.id);
+          assets = assets.filter((a) => a.id !== op.id);
+          undos[i] = { kind: 'script_create', script: current.content };
         } else {
           const current = items.find((i) => i.id === op.id);
           if (!current) throw new Error('missing');
           await store.deleteItem(op.id);
-          items = items.filter((i) => i.id !== op.id);
+          items = items.filter((it) => it.id !== op.id);
           const rest: Partial<CalendarItem> = { ...current };
           delete rest.id;
-          undos.push({ kind: 'create', item: rest as NewItem });
+          undos[i] = { kind: 'create', item: rest as NewItem };
         }
       } catch {
         failed += 1;
-        undos.push(null);
+        undos[i] = null;
       }
     }
-    const touched = new Set(ops.flatMap((op) => (op.kind === 'create' ? [] : [op.id])));
+    const touched = new Set(ops.flatMap((op) => (op.kind === 'update' || op.kind === 'delete' ? [op.id] : [])));
     const created = items.filter((i) => !start.items.some((s) => s.id === i.id));
     const removed = new Set(start.items.filter((s) => !items.some((i) => i.id === s.id)).map((s) => s.id));
+    const touchedAssets = new Set(ops.flatMap((op) => (op.kind === 'script_update' ? [op.id] : [])));
+    const createdAssets = assets.filter((a) => !start.assets.some((s) => s.id === a.id));
+    const removedAssets = new Set(start.assets.filter((s) => !assets.some((a) => a.id === s.id)).map((s) => s.id));
     apply((c) => ({
       ...c,
+      ...details,
       items: [
         ...c.items.filter((i) => !removed.has(i.id)).map((i) => (touched.has(i.id) ? items.find((n) => n.id === i.id) ?? i : i)),
         ...created,
       ].sort((a, b) => a.scheduled_on.localeCompare(b.scheduled_on) || a.sort - b.sort),
+      // Merged like posts, so two batches saving at once (say, two quick Undo clicks) don't overwrite each other.
+      assets: [
+        ...c.assets.filter((a) => !removedAssets.has(a.id)).map((a) => (touchedAssets.has(a.id) ? assets.find((n) => n.id === a.id) ?? a : a)),
+        ...createdAssets,
+      ],
     }));
     if (failed) toast(`${failed} change${failed === 1 ? '' : 's'} couldn't be saved. Try again.`, 'error');
     else toast(ops.length === 1 ? 'Done.' : `${ops.length} changes applied.`);
@@ -336,6 +380,7 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
               className="btn-soft"
               onClick={() => {
                 const fresh = resetSample();
+                setChat([]);
                 setCampaign(fresh);
                 setWeekIndex(currentWeekIndex(fresh.start_date, fresh.duration_weeks));
                 toast('Sample reset.');
@@ -503,6 +548,21 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
       {showRecap && <RecapModal campaign={campaign} onClose={() => setShowRecap(false)} />}
     </div>
   );
+}
+
+const MAX_SAVED_MESSAGES = 60;
+
+/** Each campaign keeps its own Ask Flaunt chat in this browser. */
+function loadChat(key: string): ChatMessage[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) ?? '[]') as ChatMessage[];
+    // A save cut off mid-way may or may not have landed, so it's not offered again.
+    return saved.map((m) =>
+      m.changes ? { ...m, changes: m.changes.map((c) => (c.state === 'applying' ? { ...c, state: 'failed' as const } : c)) } : m,
+    );
+  } catch {
+    return [];
+  }
 }
 
 function BackLink({ onBack, label }: { onBack: () => void; label: string }) {
