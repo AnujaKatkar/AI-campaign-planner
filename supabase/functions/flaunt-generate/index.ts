@@ -33,7 +33,18 @@ type CampaignContext = { business_name: string; target_audience: string; goal: s
 type Task =
   | { task: "rewrite_item"; style: "fresh" | "shorter" | "spanish"; campaign: CampaignContext; item: Record<string, unknown> }
   | { task: "more_copy"; group: string; examples: string[]; campaign: CampaignContext }
-  | { task: "next_week"; stats: unknown; campaign: CampaignContext };
+  | { task: "next_week"; stats: unknown; campaign: CampaignContext }
+  | { task: "refine_brief_field"; field: BriefField; value: string; instruction?: string; brief: Partial<Brief> }
+  | { task: "plan_chat"; plan: ChatPlan; history: { role: "user" | "assistant"; text: string }[]; message: string; focus?: string | null }
+  | { task: "brief_chat"; brief: Partial<Brief>; history: { role: "user" | "assistant"; text: string }[]; message: string };
+
+type ChatPlan = {
+  campaign: CampaignContext & { name?: string; big_idea?: string | null; start_date: string; duration_weeks: number; channels: string[] };
+  phases: { name: string; starts_on: string; ends_on: string }[];
+  items: Record<string, unknown>[];
+};
+
+type BriefField = "business_name" | "business_brief" | "target_audience" | "offer";
 
 const RECIPES: Record<string, string> = {
   auto: "pick the best story shape for the goal",
@@ -248,10 +259,133 @@ Deno.serve(async (req) => {
 });
 
 // ---------- Small AI tasks used by the workspace -------------------------
+const nullable = (type: string, extra: Record<string, unknown> = {}) => ({ type: [type, "null"], ...extra });
+
 const TASK_SCHEMAS = {
   rewrite_item: obj({ item: obj({ title: str, hook: str, body: str, cta: str }) }),
   more_copy: obj({ lines: strArr }),
   next_week: obj({ suggestions: strArr }),
+  refine_brief_field: obj({ suggestions: strArr }),
+  plan_chat: obj({
+    reply: str,
+    changes: {
+      type: "array",
+      items: obj({
+        op: { type: "string", enum: ["update", "create", "delete"] },
+        ref: { type: ["string", "null"] },
+        reason: str,
+        fields: obj(Object.fromEntries(
+          ["title", "hook", "body", "cta", "visual", "format", "channel", "scheduled_on"].map((k) => [k, { type: ["string", "null"] }]),
+        )),
+      }),
+    },
+  }),
+  brief_chat: obj({
+    reply: str,
+    suggestions: strArr,
+    brief: obj({
+      business_name: nullable("string"),
+      business_brief: nullable("string"),
+      target_audience: nullable("string"),
+      goal: nullable("string", { enum: ["awareness", "leads", "sales", "launch", "event", "retention", null] }),
+      duration_weeks: nullable("integer"),
+      workload: nullable("string", { enum: ["light", "steady", "allin", null] }),
+      offer: nullable("string"),
+      channels: { type: ["array", "null"], items: { type: "string", enum: ["instagram", "tiktok", "linkedin", "email", "facebook", "google", "blog"] } },
+      tone: nullable("string", { enum: ["Bold", "Playful", "Premium", "Warm", "Witty", null] }),
+      story_recipe: nullable("string", { enum: ["auto", "problem", "hero", "backstage", "aida", null] }),
+    }),
+  }),
+};
+
+const BRIEF_CHAT_SYSTEM = `You are Flaunt, a friendly senior marketer brainstorming with a small-business owner before you plan their campaign.
+Your job: help them think (names, angles, who to target, an offer) and, through the conversation, fill in their campaign brief.
+Rules:
+- reply: warm, plain English, 2–6 short sentences. Offer concrete ideas when they're unsure (e.g. 3 name options with a one-line why).
+- Ask at most one question per turn, about the most important thing still missing, in this order:
+  what they sell, business name, who to reach, goal, channels, tone, offer.
+- brief: the whole brief as it now stands. Keep every value already in the brief unless the owner changes it.
+  Only fill a field when the owner said it or clearly picked or agreed to your suggestion. Ideas you only suggested stay null.
+- business_brief: one or two plain sentences on what they sell. target_audience: one or two sentences about one real kind of person.
+- duration_weeks is one of 2, 4, 6, 8, 12. Leave duration_weeks, workload and story_recipe null unless the owner talks about them.
+- suggestions: 2–4 short tap-to-send replies the owner might want next, in their voice (e.g. a name option, "Yes, use that", "Not sure, you pick").
+- When business name, what they sell, audience, goal, channels and tone are all known, say the brief is ready and they can review it or generate the plan.
+- No invented statistics, prices or claims about the business.`;
+
+function briefChatPrompt(t: Extract<Task, { task: "brief_chat" }>): string {
+  const clip = (v: unknown, n: number) => (typeof v === "string" ? v.slice(0, n) : v);
+  const brief = Object.fromEntries(Object.entries(t.brief ?? {}).map(([k, v]) => [k, clip(v, 600)]).filter(([, v]) => v !== null && v !== "" && v !== undefined));
+  const history = (t.history ?? []).slice(-12).map((m) => `${m.role === "user" ? "Owner" : "Flaunt"}: ${clip(m.text, 1200)}`).join("\n");
+  return `Brief so far (JSON): ${JSON.stringify(brief)}
+${history ? `\nConversation so far:\n${history}\n` : ""}
+Owner: ${clip(t.message, 1200)}`;
+}
+
+const CHAT_SYSTEM = `You are Flaunt, a friendly senior marketer who helps a small-business owner adjust their campaign plan.
+You can answer questions about the plan and propose edits to its posts.
+Rules:
+- reply: 1–4 short sentences in plain English, no jargon. If you propose changes, say what you changed and why in one line.
+- Only propose changes when the owner asks for a change (or clearly agrees to one). For questions, answer and leave changes empty.
+- op "update": ref is the post's ref. In fields, give ONLY the fields that change; every other field is null.
+- op "create": ref is null. Give title, scheduled_on, channel and format, plus hook, body and cta when useful.
+- op "delete": ref is the post's ref; all fields null.
+- scheduled_on is YYYY-MM-DD within the campaign dates. channel must be one of the campaign's channels.
+- Format names in plain words: "Short video (Reel)", "Swipe post (Carousel)", "Story poll", "Photo post", "Email".
+- body: 2–4 sentences ready to paste, ending with the call to action. Keep the campaign's tone and goal.
+- Don't change posts with status "done" unless the owner names them. No invented statistics, testimonials or claims.
+- At most 20 changes. reason: one short sentence per change.`;
+
+function chatPrompt(t: Extract<Task, { task: "plan_chat" }>): string {
+  const clip = (v: unknown, n: number) => (typeof v === "string" ? v.slice(0, n) : v);
+  const c = t.plan.campaign;
+  const items = (t.plan.items ?? []).slice(0, 150).map((it) =>
+    Object.fromEntries(Object.entries(it).map(([k, v]) => [k, clip(v, 400)]).filter(([, v]) => v !== null && v !== "")),
+  );
+  const history = (t.history ?? []).slice(-10).map((m) => `${m.role === "user" ? "Owner" : "Flaunt"}: ${clip(m.text, 1000)}`).join("\n");
+  return `Campaign: ${c.name ?? ""} for ${c.business_name}
+Big idea: ${c.big_idea ?? "none"}
+Audience: ${c.target_audience}
+Goal: ${c.goal} · Tone: ${c.tone ?? "warm"} · Offer: ${c.offer ?? "none"}
+Runs ${c.start_date} for ${c.duration_weeks} weeks · Channels: ${(c.channels ?? []).join(", ")}
+Phases: ${(t.plan.phases ?? []).map((p) => `${p.name} (${p.starts_on} to ${p.ends_on})`).join("; ")}
+
+Posts (JSON, one per line):
+${items.map((it) => JSON.stringify(it)).join("\n")}
+${history ? `\nConversation so far:\n${history}\n` : ""}${t.focus ? `\nThe owner is asking about post ${t.focus}.` : ""}
+Owner: ${clip(t.message, 1000)}`;
+}
+
+// What each brief box is for, so the AI writes the right kind of answer.
+const BRIEF_FIELDS: Record<BriefField, string> = {
+  business_name: "the business name. A short brand name only, under 40 characters, no tagline",
+  business_brief: "what the business sells or offers. One or two plain sentences: the product, what makes it different, and where or how people get it",
+  target_audience: "who the campaign should reach. One or two sentences describing one real kind of person: who they are, where they are, what they care about",
+  offer: "the offer or hook people act on. One short sentence with a clear reason to act now",
+};
+
+function refinePrompt(t: Extract<Task, { task: "refine_brief_field" }>): string {
+  const clip = (s: unknown, n: number) => (typeof s === "string" ? s.slice(0, n) : "");
+  const b = t.brief ?? {};
+  const ctx = [
+    ["Business", b.business_name], ["Sells", b.business_brief], ["Audience", b.target_audience],
+    ["Goal", b.goal], ["Offer", b.offer], ["Tone", b.tone],
+  ]
+    .filter(([key, v]) => typeof v === "string" && v.trim() && key !== FIELD_KEYS[t.field])
+    .map(([key, v]) => `${key}: ${clip(v, 400)}`)
+    .join("\n");
+  const value = clip(t.value, 1000).trim();
+  const instruction = clip(t.instruction, 300).trim();
+  return `A small-business owner is filling in a campaign brief. The box is ${BRIEF_FIELDS[t.field]}.
+${ctx ? `What they've said so far:\n${ctx}\n` : ""}
+${value ? `Their current answer (it may be rough or spoken aloud):\n"""${value}"""` : "The box is empty. Write an answer from what they've said so far."}
+${instruction ? `Their request: ${instruction}` : value ? "Make it clearer and more specific, fixing grammar and filler words." : ""}
+Give exactly 3 different versions they could use. Keep every real detail they gave.
+Never invent prices, places, numbers, awards or claims they didn't mention; use at most one [placeholder] if a detail is truly needed.
+Write in the first person plural where it fits ("we"). Plain words, no marketing jargon, no quotation marks around the answer.`;
+}
+
+const FIELD_KEYS: Record<BriefField, string> = {
+  business_name: "Business", business_brief: "Sells", target_audience: "Audience", offer: "Offer",
 };
 
 const STYLE_RULES: Record<string, string> = {
@@ -261,6 +395,9 @@ const STYLE_RULES: Record<string, string> = {
 };
 
 function taskPrompt(t: Task): string {
+  if (t.task === "refine_brief_field") return refinePrompt(t);
+  if (t.task === "plan_chat") return chatPrompt(t);
+  if (t.task === "brief_chat") return briefChatPrompt(t);
   const c = t.campaign;
   const ctx = `Business: ${c.business_name}\nAudience: ${c.target_audience}\nGoal: ${c.goal}\nTone: ${c.tone ?? "warm"}\nOffer: ${c.offer ?? "none"}`;
   if (t.task === "rewrite_item") {
@@ -275,13 +412,17 @@ function taskPrompt(t: Task): string {
 async function runTask(t: Task) {
   const schema = TASK_SCHEMAS[t.task];
   if (!schema) throw new Error("Unknown task");
+  if (t.task === "refine_brief_field" && !(t.field in BRIEF_FIELDS)) throw new Error("Unknown brief field");
   const ai = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: OPENAI_MODEL,
       messages: [
-        { role: "system", content: "You are Flaunt, a friendly senior marketer for small businesses. Plain English, no jargon, never mean." },
+        {
+          role: "system",
+          content: t.task === "plan_chat" ? CHAT_SYSTEM : t.task === "brief_chat" ? BRIEF_CHAT_SYSTEM : "You are Flaunt, a friendly senior marketer for small businesses. Plain English, no jargon, never mean.",
+        },
         { role: "user", content: taskPrompt(t) },
       ],
       response_format: { type: "json_schema", json_schema: { name: t.task, strict: true, schema } },

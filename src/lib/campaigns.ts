@@ -211,6 +211,43 @@ export async function askNextWeek(campaign: CampaignContext, stats: unknown): Pr
   return data.suggestions;
 }
 
+export type BriefTextField = 'business_name' | 'business_brief' | 'target_audience' | 'offer';
+
+/** Three AI-improved versions of one brief answer. An empty value asks the AI to draft one from the rest of the brief. */
+export async function refineBriefField(
+  field: BriefTextField,
+  value: string,
+  brief: Partial<BriefInput>,
+  instruction?: string,
+): Promise<string[]> {
+  const data = await invoke<{ suggestions?: string[] }>({
+    task: 'refine_brief_field',
+    field,
+    value,
+    instruction,
+    brief: {
+      business_name: brief.business_name,
+      business_brief: brief.business_brief,
+      target_audience: brief.target_audience,
+      goal: brief.goal,
+      offer: brief.offer,
+      tone: brief.tone,
+    },
+  });
+  if (!Array.isArray(data?.suggestions)) throw new Error(GENERIC_ERROR);
+  return data.suggestions.filter((s) => typeof s === 'string' && s.trim()).slice(0, 3);
+}
+
+/** Sends one chat turn to the plan assistant. The reply is checked and turned into edits in lib/assistant. */
+export async function planChat(payload: Record<string, unknown>): Promise<{ reply?: unknown; changes?: unknown }> {
+  return invoke({ task: 'plan_chat', ...payload });
+}
+
+/** One turn of the brainstorm chat before the brief exists. The reply's brief is checked in lib/briefSteps. */
+export async function briefChat(payload: Record<string, unknown>): Promise<{ reply?: unknown; suggestions?: unknown; brief?: unknown }> {
+  return invoke({ task: 'brief_chat', ...payload });
+}
+
 const ITEM_COLUMNS =
   'id, phase_id, scheduled_on, channel, format, est_minutes, title, hook, body, cta, visual, why, status, reach, clicks, conversions, sort';
 

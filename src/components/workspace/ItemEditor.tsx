@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Languages, Lightbulb, Loader2, Scissors, Sparkles, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Languages, Lightbulb, Loader2, MessageCircle, Scissors, Sparkles, Trash2 } from 'lucide-react';
 import Drawer from '@/components/Drawer';
 import { useToast } from '@/components/Toast';
 import {
@@ -22,6 +22,7 @@ type ItemEditorProps = {
   onChange: (patch: ItemPatch) => void;
   onDelete: () => void;
   onClose: () => void;
+  onAsk: () => void;
 };
 
 type TextField = 'title' | 'hook' | 'body' | 'cta' | 'visual' | 'format';
@@ -33,7 +34,7 @@ const REWRITES: { style: RewriteStyle; label: string; icon: typeof Sparkles }[] 
   { style: 'spanish', label: 'En español', icon: Languages },
 ];
 
-export default function ItemEditor({ campaign, item, onChange, onDelete, onClose }: ItemEditorProps) {
+export default function ItemEditor({ campaign, item, onChange, onDelete, onClose, onAsk }: ItemEditorProps) {
   const toast = useToast();
   const [draft, setDraft] = useState(item);
   const [rewriting, setRewriting] = useState<RewriteStyle | null>(null);
@@ -206,6 +207,9 @@ export default function ItemEditor({ campaign, item, onChange, onDelete, onClose
                 {label}
               </button>
             ))}
+            <button type="button" onClick={onAsk} className="btn-soft !border-teal/40">
+              <MessageCircle className="h-4 w-4 text-teal" aria-hidden /> Ask Flaunt about this post
+            </button>
           </div>
         </div>
 

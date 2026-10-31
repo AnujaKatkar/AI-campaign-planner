@@ -1,3 +1,4 @@
+import SmartField from '@/components/brief/SmartField';
 import type { BriefInput, Channel, Goal, StoryRecipe, Workload } from '@/lib/campaigns';
 import { channelMeta } from '@/lib/channels';
 import { CHANNELS, DURATIONS, GOALS, STEP_COPY, STORY_RECIPES, TONES, WORKLOADS, type StepId } from '@/lib/briefSteps';
@@ -6,6 +7,8 @@ type StepFieldsProps = {
   step: StepId;
   values: Partial<BriefInput>;
   onChange: (patch: Partial<BriefInput>) => void;
+  signedIn: boolean;
+  onNeedAuth: () => void;
 };
 
 const TILE_BASE =
@@ -21,35 +24,25 @@ function pillClass(selected: boolean) {
   }`;
 }
 
-export default function StepFields({ step, values, onChange }: StepFieldsProps) {
+export default function StepFields({ step, values, onChange, signedIn, onNeedAuth }: StepFieldsProps) {
   const copy = STEP_COPY[step];
 
   switch (step) {
     case 'business_name':
     case 'offer':
-      return (
-        <input
-          type="text"
-          autoFocus
-          value={(values[step] as string | undefined) ?? ''}
-          onChange={(e) => onChange({ [step]: e.target.value })}
-          placeholder={copy.placeholder}
-          aria-label={copy.question}
-          className="field text-lg"
-        />
-      );
-
     case 'business_brief':
     case 'target_audience':
       return (
-        <textarea
-          autoFocus
-          rows={3}
-          value={(values[step] as string | undefined) ?? ''}
-          onChange={(e) => onChange({ [step]: e.target.value })}
+        <SmartField
+          field={step}
+          multiline={step === 'business_brief' || step === 'target_audience'}
+          value={values[step] ?? ''}
+          onChange={(value) => onChange({ [step]: value })}
           placeholder={copy.placeholder}
-          aria-label={copy.question}
-          className="field text-lg"
+          label={copy.question}
+          brief={values}
+          signedIn={signedIn}
+          onNeedAuth={onNeedAuth}
         />
       );
 

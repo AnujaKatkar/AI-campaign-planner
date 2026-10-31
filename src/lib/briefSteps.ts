@@ -136,3 +136,42 @@ export function briefStrength(v: Partial<BriefInput>): BriefStrength {
   if (score >= 3) return { level: 1, label: 'Good', tip };
   return { level: 0, label: 'Thin', tip };
 }
+
+/** Brief fields a brainstorm must settle before the plan can be generated. Duration and workload have defaults. */
+export const MUST_HAVES: { key: keyof BriefInput; label: string }[] = [
+  { key: 'business_brief', label: 'What you sell' },
+  { key: 'business_name', label: 'Business name' },
+  { key: 'target_audience', label: 'Who to reach' },
+  { key: 'goal', label: 'Goal' },
+  { key: 'channels', label: 'Channels' },
+  { key: 'tone', label: 'Tone' },
+];
+
+export function hasValue(v: Partial<BriefInput>, key: keyof BriefInput): boolean {
+  const value = v[key];
+  return Array.isArray(value) ? value.length > 0 : typeof value === 'number' ? value > 0 : !!String(value ?? '').trim();
+}
+
+/** Keeps only the AI's brief values that match an option the form offers, so a chat can never set something the form can't show. */
+export function briefPatchFromAI(raw: unknown): Partial<BriefInput> {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+  const oneOf = <T extends string | number>(v: unknown, options: readonly T[]) => (options.includes(v as T) ? (v as T) : undefined);
+  const patch: Partial<BriefInput> = {
+    business_name: text(r.business_name),
+    business_brief: text(r.business_brief),
+    target_audience: text(r.target_audience),
+    offer: text(r.offer),
+    goal: oneOf(r.goal, GOALS.map((g) => g.value)),
+    duration_weeks: oneOf(r.duration_weeks, DURATIONS),
+    workload: oneOf(r.workload, WORKLOADS.map((w) => w.value)),
+    tone: oneOf(r.tone, TONES.map((t) => t.value)),
+    story_recipe: oneOf(r.story_recipe, STORY_RECIPES.map((s) => s.value)),
+  };
+  if (Array.isArray(r.channels)) {
+    const allowed = CHANNELS.map((c) => c.value);
+    const channels = [...new Set(r.channels.filter((c): c is Channel => allowed.includes(c as Channel)))];
+    if (channels.length) patch.channels = channels;
+  }
+  return Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Partial<BriefInput>;
+}

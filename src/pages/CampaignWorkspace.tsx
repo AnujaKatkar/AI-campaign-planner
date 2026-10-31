@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ArrowLeft, Flame, Loader2, PartyPopper, RotateCcw } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Flame, Loader2, PartyPopper, RotateCcw, Sparkles } from 'lucide-react';
 import { useToast } from '@/components/Toast';
+import AssistantPanel from '@/components/workspace/AssistantPanel';
 import BriefTab from '@/components/workspace/BriefTab';
 import CalendarView from '@/components/workspace/CalendarView';
 import CoachCard from '@/components/workspace/CoachCard';
@@ -26,7 +27,9 @@ import {
   type Idea,
   type ItemPatch,
   type ItemStatus,
+  type NewItem,
 } from '@/lib/campaigns';
+import type { ChatMessage, PlanOp } from '@/lib/assistant';
 import { celebrate } from '@/lib/confetti';
 import { phaseForDate } from '@/lib/phases';
 import { postTypeFor } from '@/lib/postTypes';
@@ -67,6 +70,9 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
   const [tab, setTab] = useState<Tab>('calendar');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showRecap, setShowRecap] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantFocus, setAssistantFocus] = useState<string | null>(null);
+  const [chat, setChat] = useState<ChatMessage[]>([]);
   const campaignRef = useRef(campaign);
   campaignRef.current = campaign;
 
@@ -199,6 +205,61 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
     if (!before) return;
     setCampaign({ ...before, assets: before.assets.map((a) => (a.id === id ? ({ ...a, ...patch } as Asset) : a)) });
     save(() => store.updateAsset(id, patch), before, message);
+  }
+
+  /**
+   * Applies assistant edits one by one, then updates the screen once, so a batch can't overwrite itself.
+   * Returns the opposite edit for each (for undo), or null where saving failed.
+   */
+  async function applyPlanOps(ops: PlanOp[]): Promise<(PlanOp | null)[]> {
+    const start = campaignRef.current;
+    if (!start) return ops.map(() => null);
+    let items = start.items;
+    const undos: (PlanOp | null)[] = [];
+    let failed = 0;
+    for (const op of ops) {
+      try {
+        if (op.kind === 'update') {
+          const current = items.find((i) => i.id === op.id);
+          if (!current) throw new Error('missing');
+          const patch: ItemPatch = { ...op.patch };
+          if (patch.scheduled_on) patch.phase_id = phaseForDate(start.phases, patch.scheduled_on)?.id ?? null;
+          await store.updateItem(op.id, patch);
+          const previous = Object.fromEntries(Object.keys(patch).map((k) => [k, current[k as keyof CalendarItem]])) as ItemPatch;
+          items = items.map((i) => (i.id === op.id ? { ...i, ...patch } : i));
+          undos.push({ kind: 'update', id: op.id, patch: previous });
+        } else if (op.kind === 'create') {
+          const draft = { ...op.item, phase_id: phaseForDate(start.phases, op.item.scheduled_on)?.id ?? null, sort: items.length };
+          const created = await store.createItem(draft);
+          items = [...items, created];
+          undos.push({ kind: 'delete', id: created.id });
+        } else {
+          const current = items.find((i) => i.id === op.id);
+          if (!current) throw new Error('missing');
+          await store.deleteItem(op.id);
+          items = items.filter((i) => i.id !== op.id);
+          const rest: Partial<CalendarItem> = { ...current };
+          delete rest.id;
+          undos.push({ kind: 'create', item: rest as NewItem });
+        }
+      } catch {
+        failed += 1;
+        undos.push(null);
+      }
+    }
+    const touched = new Set(ops.flatMap((op) => (op.kind === 'create' ? [] : [op.id])));
+    const created = items.filter((i) => !start.items.some((s) => s.id === i.id));
+    const removed = new Set(start.items.filter((s) => !items.some((i) => i.id === s.id)).map((s) => s.id));
+    apply((c) => ({
+      ...c,
+      items: [
+        ...c.items.filter((i) => !removed.has(i.id)).map((i) => (touched.has(i.id) ? items.find((n) => n.id === i.id) ?? i : i)),
+        ...created,
+      ].sort((a, b) => a.scheduled_on.localeCompare(b.scheduled_on) || a.sort - b.sort),
+    }));
+    if (failed) toast(`${failed} change${failed === 1 ? '' : 's'} couldn't be saved. Try again.`, 'error');
+    else toast(ops.length === 1 ? 'Done.' : `${ops.length} changes applied.`);
+    return undos;
   }
 
   function decideIdea(asset: IdeaAsset, kept: boolean) {
@@ -405,7 +466,39 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
           onChange={(patch) => updateItem(editing.id, patch)}
           onDelete={() => deleteItem(editing.id)}
           onClose={() => setEditingId(null)}
+          onAsk={() => {
+            setAssistantFocus(editing.id);
+            setEditingId(null);
+            setAssistantOpen(true);
+          }}
         />
+      )}
+      {assistantOpen && (
+        <AssistantPanel
+          campaign={campaign}
+          messages={chat}
+          setMessages={setChat}
+          focusId={assistantFocus}
+          onClearFocus={() => setAssistantFocus(null)}
+          onApply={applyPlanOps}
+          onOpenItem={(id) => {
+            setAssistantOpen(false);
+            setEditingId(id);
+          }}
+          onClose={() => setAssistantOpen(false)}
+        />
+      )}
+      {!assistantOpen && !editing && !showRecap && (
+        <button
+          type="button"
+          onClick={() => {
+            setAssistantFocus(null);
+            setAssistantOpen(true);
+          }}
+          className="btn-press fixed bottom-5 right-5 z-40 shadow-lift"
+        >
+          <Sparkles className="h-5 w-5" aria-hidden /> Ask Flaunt
+        </button>
       )}
       {showRecap && <RecapModal campaign={campaign} onClose={() => setShowRecap(false)} />}
     </div>

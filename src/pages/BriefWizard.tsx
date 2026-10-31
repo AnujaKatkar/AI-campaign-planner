@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { AlertCircle, ArrowLeft, ArrowRight, Check, Lock } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ArrowRight, Check, ListChecks, Lock, MessagesSquare } from 'lucide-react';
+import BriefChat, { type BrainstormMessage } from '@/components/brief/BriefChat';
 import StepFields from '@/components/brief/StepFields';
 import { generateCampaign, type BriefInput } from '@/lib/campaigns';
-import { STEP_COPY, STEP_IDS, briefStrength, type StepId } from '@/lib/briefSteps';
+import { MUST_HAVES, STEP_COPY, STEP_IDS, briefStrength, hasValue, type StepId } from '@/lib/briefSteps';
 
 type BriefWizardProps = {
   signedIn: boolean;
@@ -31,14 +32,22 @@ const INITIAL_VALUES: Partial<BriefInput> = {
   story_recipe: 'auto',
 };
 
-function loadDraft(): { values: Partial<BriefInput>; index: number } {
+type Mode = 'choose' | 'chat' | 'form';
+type Draft = { values: Partial<BriefInput>; index: number; mode: Mode; chat: BrainstormMessage[] };
+
+function loadDraft(): Draft {
   try {
     const saved = sessionStorage.getItem(DRAFT_KEY);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const draft = { values: INITIAL_VALUES, index: 0, chat: [], ...(JSON.parse(saved) as Partial<Draft>) };
+      // Only resume a chat or form that has something in it; an untouched draft starts at the choice again.
+      const started = draft.chat.length > 0 || draft.index > 0 || MUST_HAVES.some((f) => hasValue(draft.values, f.key));
+      return { ...draft, mode: started ? (draft.mode ?? 'form') : 'choose' };
+    }
   } catch {
     // Start fresh.
   }
-  return { values: INITIAL_VALUES, index: 0 };
+  return { values: INITIAL_VALUES, index: 0, mode: 'choose', chat: [] };
 }
 
 function isStepComplete(step: StepId, values: Partial<BriefInput>): boolean {
@@ -84,13 +93,16 @@ function toBrief(values: Partial<BriefInput>): BriefInput {
 const STRENGTH_STYLES = ['bg-rose', 'bg-honey', 'bg-sage'];
 
 export default function BriefWizard({ signedIn, onNeedAuth, onCreated, onExit }: BriefWizardProps) {
-  const [{ values, index }, setDraft] = useState(loadDraft);
+  const [{ values, index, mode, chat }, setDraft] = useState(loadDraft);
   const [generating, setGenerating] = useState(false);
   const [lineIndex, setLineIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const setValues = (patch: Partial<BriefInput>) => setDraft((d) => ({ ...d, values: { ...d.values, ...patch } }));
   const setIndex = (fn: (i: number) => number) => setDraft((d) => ({ ...d, index: fn(d.index) }));
+  const setMode = (next: Mode, nextIndex?: number) => setDraft((d) => ({ ...d, mode: next, index: nextIndex ?? d.index }));
+  const setChat = (fn: (m: BrainstormMessage[]) => BrainstormMessage[]) => setDraft((d) => ({ ...d, chat: fn(d.chat) }));
+  const firstIncomplete = STEP_IDS.findIndex((s) => !isStepComplete(s, values));
 
   const step = STEP_IDS[index];
   const copy = STEP_COPY[step];
@@ -101,11 +113,11 @@ export default function BriefWizard({ signedIn, onNeedAuth, onCreated, onExit }:
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ values, index }));
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ values, index, mode, chat }));
     } catch {
       // The draft just won't survive a reload.
     }
-  }, [values, index]);
+  }, [values, index, mode, chat]);
 
   useEffect(() => {
     if (!generating) return;
@@ -120,6 +132,10 @@ export default function BriefWizard({ signedIn, onNeedAuth, onCreated, onExit }:
       setIndex((i) => i + 1);
       return;
     }
+    await generate();
+  }
+
+  async function generate() {
     if (!signedIn) {
       onNeedAuth();
       return;
@@ -144,6 +160,19 @@ export default function BriefWizard({ signedIn, onNeedAuth, onCreated, onExit }:
       e.currentTarget.requestSubmit();
     }
   }
+
+  // From the chat: generate if every step has an answer, otherwise open the form at the first gap.
+  function generateFromChat() {
+    if (firstIncomplete === -1) void generate();
+    else setMode('form', firstIncomplete);
+  }
+
+  const errorBox = error && (
+    <p role="alert" className="mt-6 flex items-start gap-2 rounded-2xl bg-rose/10 px-4 py-3 text-sm font-medium text-rose-deep">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+      {error}
+    </p>
+  );
 
   if (generating) {
     return (
@@ -172,12 +201,90 @@ export default function BriefWizard({ signedIn, onNeedAuth, onCreated, onExit }:
     );
   }
 
-  return (
-    <div className="mx-auto max-w-2xl px-4 py-10 sm:px-5 md:py-12">
-      <div className="flex items-center justify-between gap-4">
+  if (mode === 'choose') {
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-10 sm:px-5 md:py-14">
         <button type="button" onClick={onExit} className="text-sm font-semibold text-muted hover:text-ink">
           Cancel
         </button>
+        <h1 className="mt-6 text-4xl font-extrabold md:text-5xl">How do you want to start?</h1>
+        <p className="mt-3 text-lg text-muted">Either way you end up with the same brief, and you can switch any time.</p>
+        <div className="mt-8 grid gap-4 md:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setMode('chat')}
+            className="card flex flex-col items-start p-6 text-left transition-colors hover:border-teal focus:outline-none focus-visible:ring-2 focus-visible:ring-teal"
+          >
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-teal/15">
+              <MessagesSquare className="h-6 w-6 text-teal" aria-hidden />
+            </span>
+            <span className="mt-4 font-display text-2xl font-extrabold">Brainstorm with Flaunt</span>
+            <span className="mt-2 text-muted">Just have an idea? Chat or talk it through. Flaunt helps with a name, who to target and an offer, and fills in your brief as you go.</span>
+            <span className="mt-4 inline-flex items-center gap-1 text-sm font-bold text-teal">
+              Start chatting <ArrowRight className="h-4 w-4" aria-hidden />
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('form')}
+            className="card flex flex-col items-start p-6 text-left transition-colors hover:border-teal focus:outline-none focus-visible:ring-2 focus-visible:ring-teal"
+          >
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-honey/25">
+              <ListChecks className="h-6 w-6 text-ink" aria-hidden />
+            </span>
+            <span className="mt-4 font-display text-2xl font-extrabold">Fill it in step by step</span>
+            <span className="mt-2 text-muted">Know what you want? Ten quick questions, with voice and AI help on every text box.</span>
+            <span className="mt-4 inline-flex items-center gap-1 text-sm font-bold text-teal">
+              Start the brief <ArrowRight className="h-4 w-4" aria-hidden />
+            </span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'chat') {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-5 md:py-10">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button type="button" onClick={onExit} className="text-sm font-semibold text-muted hover:text-ink">
+            Cancel
+          </button>
+          <button type="button" onClick={() => setMode('form', firstIncomplete === -1 ? 0 : firstIncomplete)} className="btn-soft">
+            <ListChecks className="h-4 w-4" aria-hidden /> Switch to step by step
+          </button>
+        </div>
+        <h1 className="mt-5 text-3xl font-extrabold md:text-4xl">Brainstorm with Flaunt</h1>
+        <p className="mt-2 text-muted">Talk it through. Your brief fills in on the right as you decide things.</p>
+        {errorBox}
+        <div className="mt-6">
+          <BriefChat
+            values={values}
+            onChange={setValues}
+            messages={chat}
+            onMessages={setChat}
+            signedIn={signedIn}
+            onNeedAuth={onNeedAuth}
+            onReview={() => setMode('form', firstIncomplete === -1 ? 0 : firstIncomplete)}
+            onGenerate={generateFromChat}
+            onClearBrief={() => setDraft((d) => ({ ...d, values: INITIAL_VALUES, index: 0 }))}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-10 sm:px-5 md:py-12">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <button type="button" onClick={onExit} className="text-sm font-semibold text-muted hover:text-ink">
+            Cancel
+          </button>
+          <button type="button" onClick={() => setMode('chat')} className="inline-flex items-center gap-1.5 text-sm font-semibold text-teal hover:underline">
+            <MessagesSquare className="h-4 w-4" aria-hidden /> Brainstorm instead
+          </button>
+        </div>
         <p className="font-mono text-sm text-muted">
           {index + 1} of {STEP_IDS.length}
         </p>
@@ -218,15 +325,10 @@ export default function BriefWizard({ signedIn, onNeedAuth, onCreated, onExit }:
           <span className="font-semibold text-ink">Why we ask:</span> {copy.why}
         </p>
         <div className="mt-7" key={step}>
-          <StepFields step={step} values={values} onChange={setValues} />
+          <StepFields step={step} values={values} onChange={setValues} signedIn={signedIn} onNeedAuth={onNeedAuth} />
         </div>
 
-        {error && (
-          <p role="alert" className="mt-6 flex items-start gap-2 rounded-2xl bg-rose/10 px-4 py-3 text-sm font-medium text-rose-deep">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-            {error}
-          </p>
-        )}
+        {errorBox}
 
         {isLast && !signedIn && (
           <p className="mt-6 flex items-start gap-2 rounded-2xl bg-blush px-4 py-3 text-sm">
