@@ -3,6 +3,38 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    color-scheme: light;
+    --bg: 255 248 240;
+    --surface: 255 255 255;
+    --surface-2: 252 235 227;
+    --ink: 43 29 22;
+    --muted: 133 105 90;
+    --line: 240 218 204;
+    --rose: 226 62 87;
+    --rose-deep: 168 42 63;
+    --on-rose: 255 255 255;
+    --honey: 242 179 61;
+    --teal: 19 121 122;
+    --sage: 62 142 94;
+  }
+
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --bg: 26 19 16;
+    --surface: 38 28 23;
+    --surface-2: 52 38 31;
+    --ink: 255 241 230;
+    --muted: 196 174 158;
+    --line: 66 49 40;
+    --rose: 255 107 127;
+    --rose-deep: 168 42 63;
+    --on-rose: 26 17 16;
+    --honey: 255 200 87;
+    --teal: 79 195 184;
+    --sage: 124 196 143;
+  }
+
   body {
     @apply bg-cream font-body text-ink antialiased;
     line-height: 1.5;
@@ -12,38 +44,42 @@
   h2,
   h3 {
     @apply font-display;
-    line-height: 1.2;
+    line-height: 1.15;
     letter-spacing: -0.02em;
   }
 
   :focus-visible {
-    outline: 3px solid #13797a;
+    outline: 3px solid rgb(var(--teal));
     outline-offset: 3px;
   }
 }
 
 @layer components {
   .btn-press {
-    @apply inline-flex items-center justify-center gap-2 rounded-full bg-rose px-6 py-3 text-lg font-bold text-white;
-    box-shadow: 0 4px 0 #a82a3f;
-    transition: transform 0.1s ease, box-shadow 0.1s ease, background-color 0.2s ease;
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-rose px-6 py-3 text-lg font-bold text-on-rose;
+    box-shadow: 0 4px 0 rgb(var(--rose-deep));
+    transition: transform 0.1s ease, box-shadow 0.1s ease, filter 0.2s ease;
   }
-
   .btn-press:hover:not(:disabled) {
-    @apply bg-[#CF3349];
+    filter: brightness(0.95);
   }
-
   .btn-press:active:not(:disabled) {
     transform: translateY(4px);
-    box-shadow: 0 0 0 #a82a3f;
+    box-shadow: 0 0 0 rgb(var(--rose-deep));
   }
-
   .btn-press:disabled {
     @apply cursor-not-allowed opacity-60;
   }
+  .btn-sm {
+    @apply px-4 py-2 text-sm;
+  }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-full border-2 border-ink bg-white px-5 py-2.5 text-base font-bold text-ink transition-colors hover:bg-blush;
+    @apply inline-flex items-center justify-center gap-2 rounded-full border-2 border-ink bg-surface px-5 py-2.5 text-base font-bold text-ink transition-colors hover:bg-blush disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .btn-soft {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-sm font-semibold text-ink transition-colors hover:border-muted hover:bg-blush disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .nav-link {
@@ -51,21 +87,44 @@
   }
 
   .field {
-    @apply w-full rounded-2xl border border-line bg-white px-4 py-3 text-base text-ink placeholder:text-muted/80 focus:border-teal focus:outline-none focus:ring-2 focus:ring-teal/30;
+    @apply w-full rounded-2xl border border-line bg-surface px-4 py-3 text-base text-ink placeholder:text-muted/70 focus:border-teal focus:outline-none focus:ring-2 focus:ring-teal/30;
+  }
+
+  .label {
+    @apply mb-1.5 block text-sm font-bold;
   }
 
   .card {
-    @apply rounded-card border border-line bg-white;
+    @apply rounded-card border border-line bg-surface;
   }
 
   .sticker {
-    @apply inline-block rounded-xl border-2 border-ink bg-honey px-3 py-1.5 text-sm font-bold text-ink shadow-sticker;
+    @apply inline-block rounded-xl border-2 border-ink bg-honey px-3 py-1.5 text-sm font-bold text-espresso shadow-sticker;
+  }
+
+  .eyebrow {
+    @apply font-mono text-xs uppercase tracking-wider text-muted;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold;
+  }
+
+  .seg {
+    @apply inline-flex items-center gap-1 rounded-full border border-line bg-surface p-1;
+  }
+  .seg > button {
+    @apply rounded-full px-3.5 py-1.5 text-sm font-semibold text-ink transition-colors hover:bg-blush;
+  }
+  .seg > button[aria-pressed='true'],
+  .seg > button[aria-selected='true'] {
+    @apply bg-ink text-cream hover:bg-ink;
   }
 
   .neon-plate {
     @apply inline-flex items-center gap-1.5 rounded-xl bg-espresso px-4 py-1;
     transform: rotate(-2deg);
-    box-shadow: 0 0 28px rgba(242, 179, 61, 0.35);
+    box-shadow: 0 0 28px rgba(242, 179, 61, 0.35), inset 0 0 0 1px rgba(255, 107, 127, 0.15);
   }
 
   .neon-text {
@@ -80,38 +139,47 @@
   .marquee-track {
     animation: marquee 30s linear infinite;
   }
+
+  .rise {
+    animation: rise 0.35s ease-out both;
+  }
+
+  .fill-bar {
+    animation: fill 12s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+  }
 }
 
 @keyframes neon-flicker {
-  0%,
-  19%,
-  21%,
-  23%,
-  25%,
-  54%,
-  56%,
-  100% {
-    opacity: 1;
-  }
-  20%,
-  24%,
-  55% {
-    opacity: 0.4;
-  }
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; }
+  20%, 24%, 55% { opacity: 0.4; }
 }
 
 @keyframes marquee {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-50%);
-  }
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fill {
+  from { width: 4%; }
+  to { width: 94%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .neon-flicker,
-  .marquee-track {
+  .marquee-track,
+  .rise {
     animation: none;
+  }
+  .fill-bar {
+    animation: none;
+    width: 60%;
+  }
+  * {
+    transition-duration: 0.01ms !important;
   }
 }

@@ -1,4 +1,4 @@
-import type { Channel, Goal, Workload } from '@/lib/campaigns';
+import type { BriefInput, Channel, Goal, StoryRecipe, Workload } from '@/lib/campaigns';
 
 export type StepId =
   | 'business_name'
@@ -9,7 +9,8 @@ export type StepId =
   | 'workload'
   | 'offer'
   | 'channels'
-  | 'tone';
+  | 'tone'
+  | 'story_recipe';
 
 export const STEP_IDS: StepId[] = [
   'business_name',
@@ -21,6 +22,7 @@ export const STEP_IDS: StepId[] = [
   'offer',
   'channels',
   'tone',
+  'story_recipe',
 ];
 
 export const STEP_COPY: Record<StepId, { question: string; why: string; placeholder?: string; optional?: boolean }> = {
@@ -65,23 +67,28 @@ export const STEP_COPY: Record<StepId, { question: string; why: string; placehol
     question: 'How do you sound?',
     why: 'Every line of copy will match this voice.',
   },
+  story_recipe: {
+    question: 'Pick a story recipe',
+    why: 'The shape every post follows. Not sure? Let Flaunt pick.',
+    optional: true,
+  },
 };
 
-export const GOALS: { value: Goal; label: string; hint: string }[] = [
-  { value: 'awareness', label: 'Awareness', hint: 'Get more people to know you exist.' },
-  { value: 'leads', label: 'Leads', hint: 'Collect enquiries or emails from interested people.' },
-  { value: 'sales', label: 'Sales', hint: 'Turn attention into orders this month.' },
-  { value: 'launch', label: 'Launch', hint: 'Build buzz for something new.' },
-  { value: 'event', label: 'Event', hint: 'Fill seats or get people through the door.' },
-  { value: 'retention', label: 'Retention', hint: 'Bring past customers back.' },
+export const GOALS: { value: Goal; label: string; hint: string; icon: string }[] = [
+  { value: 'awareness', icon: '📣', label: 'Awareness', hint: 'More posts that travel far (videos, shareable tips). Success = new followers.' },
+  { value: 'leads', icon: '✉️', label: 'Leads', hint: 'Every post points to a sign-up or enquiry. Success = sign-ups.' },
+  { value: 'sales', icon: '🛒', label: 'Sales', hint: 'Product-first posts with a clear offer and deadline. Success = sales.' },
+  { value: 'launch', icon: '🚀', label: 'Launch', hint: 'Tease first, reveal big, then prove it. Success = first orders.' },
+  { value: 'event', icon: '🎟️', label: 'Event', hint: 'A countdown that builds to the date. Success = RSVPs.' },
+  { value: 'retention', icon: '💛', label: 'Retention', hint: 'More email and loyalty posts for people who already know you. Success = repeat orders.' },
 ];
 
 export const DURATIONS = [2, 4, 6, 8, 12];
 
 export const WORKLOADS: { value: Workload; label: string; hint: string }[] = [
-  { value: 'light', label: 'Light', hint: 'About 3 posts a week' },
-  { value: 'steady', label: 'Steady', hint: 'About 5 posts a week' },
-  { value: 'allin', label: 'All-in', hint: 'Every channel on a full schedule' },
+  { value: 'light', label: 'Light', hint: 'About 3 posts a week · roughly 1.5 hr' },
+  { value: 'steady', label: 'Steady', hint: 'About 5 posts a week · roughly 2.5 hr' },
+  { value: 'allin', label: 'All-in', hint: 'Every channel on a full schedule · 5 hr+' },
 ];
 
 export const CHANNELS: { value: Channel; label: string }[] = [
@@ -94,4 +101,38 @@ export const CHANNELS: { value: Channel; label: string }[] = [
   { value: 'blog', label: 'Blog' },
 ];
 
-export const TONES = ['Bold', 'Playful', 'Premium', 'Warm', 'Witty'];
+export const TONES: { value: string; hint: string; sample: string }[] = [
+  { value: 'Bold', hint: 'Short, punchy lines that take a stand.', sample: '“Your mornings deserve better. Fix that.”' },
+  { value: 'Playful', hint: 'Light, fun and a little silly. Emojis welcome.', sample: '“Warning: may cause happy dances ☕💃”' },
+  { value: 'Premium', hint: 'Calm, confident and polished. Fewer words, more weight.', sample: '“Roasted in small batches. Worth the wait.”' },
+  { value: 'Warm', hint: 'Friendly and personal, like a note from a neighbour.', sample: '“We saved you a cup. Come say hi.”' },
+  { value: 'Witty', hint: 'Clever wordplay and a wink. Never mean.', sample: '“Espresso yourself. We won’t judge.”' },
+];
+
+export const STORY_RECIPES: { value: StoryRecipe; label: string; hint: string }[] = [
+  { value: 'auto', label: 'Let Flaunt pick', hint: 'We choose the best shape for your goal.' },
+  { value: 'problem', label: 'Problem → fix', hint: 'Name the annoying thing, then show how you solve it.' },
+  { value: 'hero', label: 'Customer as hero', hint: 'Your customer is the star; you are the helpful sidekick.' },
+  { value: 'backstage', label: 'Behind the scenes', hint: 'Show how it’s made. People trust what they can see.' },
+  { value: 'aida', label: 'Hook → want → act', hint: 'Grab attention, build desire, then ask for one action.' },
+];
+
+export type BriefStrength = { level: 0 | 1 | 2; label: 'Thin' | 'Good' | 'Strong'; tip: string | null };
+
+/** Scores the brief so far and gives one tip at a time, most useful first. */
+export function briefStrength(v: Partial<BriefInput>): BriefStrength {
+  const words = (s?: string) => s?.trim().split(/\s+/).filter(Boolean).length ?? 0;
+  const checks: [boolean, string][] = [
+    [words(v.business_brief) >= 6, 'Say what you sell in a full sentence, like “fresh sourdough delivered on weekends”.'],
+    [words(v.target_audience) >= 5, 'Describe one real person: their age, where they are, what they care about.'],
+    [!!v.goal, 'Pick a goal so every post ends with the right ask.'],
+    [!!v.offer?.trim(), 'Add an offer so people have one clear thing to act on.'],
+    [(v.channels?.length ?? 0) >= 2, 'Two or more channels gives the plan room to breathe.'],
+    [!!v.tone, 'Choose a tone so the copy sounds like you.'],
+  ];
+  const score = checks.filter(([ok]) => ok).length;
+  const tip = checks.find(([ok]) => !ok)?.[1] ?? null;
+  if (score >= 5) return { level: 2, label: 'Strong', tip };
+  if (score >= 3) return { level: 1, label: 'Good', tip };
+  return { level: 0, label: 'Thin', tip };
+}

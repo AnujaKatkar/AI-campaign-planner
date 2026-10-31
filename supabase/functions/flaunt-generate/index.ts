@@ -25,6 +25,26 @@ type Brief = {
   tone?: string;
   offer?: string;
   workload?: "light" | "steady" | "allin";
+  story_recipe?: "auto" | "problem" | "hero" | "backstage" | "aida";
+};
+
+type CampaignContext = { business_name: string; target_audience: string; goal: string; tone?: string | null; offer?: string | null };
+
+type Task =
+  | { task: "rewrite_item"; style: "fresh" | "shorter" | "spanish"; campaign: CampaignContext; item: Record<string, unknown> }
+  | { task: "more_copy"; group: string; examples: string[]; campaign: CampaignContext }
+  | { task: "next_week"; stats: unknown; campaign: CampaignContext };
+
+const RECIPES: Record<string, string> = {
+  auto: "pick the best story shape for the goal",
+  problem: "Problem → fix: name the customer's annoyance, then show the fix",
+  hero: "Customer as hero: the customer is the star, the business is the helpful guide",
+  backstage: "Behind the scenes: show how it is made and who makes it",
+  aida: "Hook → want → act: grab attention, build desire, ask for one action",
+};
+
+const GOAL_LABELS: Record<string, string> = {
+  awareness: "New followers", leads: "Sign-ups", sales: "Sales", launch: "First orders", event: "RSVPs", retention: "Repeat orders",
 };
 
 const str = { type: "string" };
@@ -49,7 +69,7 @@ const CAMPAIGN_SCHEMA = obj({
     items: obj({
       day_offset: { type: "integer" },
       channel: str, format: str, phase: str,
-      title: str, hook: str, body: str, visual: str, cta: str, est_minutes: { type: "integer" },
+      title: str, hook: str, body: str, visual: str, cta: str, why: str, est_minutes: { type: "integer" },
     }),
   },
   ideas: { type: "array", items: obj({ title: str, description: str, channel: str, format: str }) },
@@ -78,6 +98,8 @@ Rules:
   "Story poll", "Google search ads". No marketing jargon in any field.
 - Every title is unique. A poll states the question AND the options. If a title promises a question or list, the body delivers it.
 - body: 2–4 sentences ready to paste, ending with the call to action. visual: one sentence on what to shoot with a phone.
+- why: one plain sentence a beginner understands on why this post works for the goal.
+- Follow the requested story recipe across the campaign and mention it in the creative brief tone.
 - est_minutes: realistic time for a small-business owner to make and post it.
 - day_offset must be between 0 and (duration_weeks*7 - 1).
 - Every hook must stop a scroll in under 2 seconds. Every CTA must match the goal.
@@ -95,7 +117,8 @@ Offer / hook: ${b.offer ?? "(none given — propose one)"}
 Duration: ${b.duration_weeks} weeks starting ${b.start_date}
 Channels: ${b.channels.join(", ")}
 Tone: ${b.tone ?? "warm, confident"}
-Workload: ${b.workload ?? "steady"}`;
+Workload: ${b.workload ?? "steady"}
+Story recipe: ${RECIPES[b.story_recipe ?? "auto"] ?? RECIPES.auto}`;
 }
 
 function addDays(iso: string, n: number) {
@@ -125,10 +148,25 @@ Deno.serve(async (req) => {
 
     const since = new Date(Date.now() - 86_400_000).toISOString();
     const { count } = await supabase.from("generations").select("id", { count: "exact", head: true })
-      .eq("user_id", user.id).gte("created_at", since);
+      .eq("user_id", user.id).eq("kind", "full_campaign").gte("created_at", since);
     if ((count ?? 0) >= 20) return json({ error: "Daily generation limit reached. Try again tomorrow." }, 429);
 
-    const brief = (await req.json()) as Brief;
+    const body = await req.json();
+    if (typeof body?.task === "string") {
+      const { count: taskCount } = await supabase.from("generations").select("id", { count: "exact", head: true })
+        .eq("user_id", user.id).neq("kind", "full_campaign").gte("created_at", since);
+      if ((taskCount ?? 0) >= 200) return json({ error: "That's a lot of rewrites for one day. Try again tomorrow." }, 429);
+      let result: unknown;
+      try {
+        result = await runTask(body as Task);
+      } catch (e) {
+        console.error(e);
+        return json({ error: "The AI is busy. Try that again in a moment; nothing was changed." }, 502);
+      }
+      await supabase.from("generations").insert({ user_id: user.id, kind: body.task, model: OPENAI_MODEL, latency_ms: Date.now() - t0 });
+      return json(result);
+    }
+    const brief = body as Brief;
     if (!brief.business_brief || !brief.target_audience || !brief.goal || !brief.duration_weeks) {
       return json({ error: "Brief, audience, goal and duration are required." }, 400);
     }
@@ -160,6 +198,7 @@ Deno.serve(async (req) => {
       target_audience: brief.target_audience, goal: brief.goal, offer: brief.offer,
       duration_weeks: brief.duration_weeks, start_date: brief.start_date,
       channels: brief.channels, tone: brief.tone, workload: brief.workload ?? "steady", ai_model: OPENAI_MODEL,
+      story_recipe: brief.story_recipe ?? "auto", goal_label: GOAL_LABELS[brief.goal], goal_target: 150,
     }).select().single();
     if (cErr) throw cErr;
 
@@ -180,7 +219,7 @@ Deno.serve(async (req) => {
           campaign_id: campaign.id, phase_id: phaseId(it.phase),
           scheduled_on: addDays(brief.start_date, Math.min(maxDay, Math.max(0, it.day_offset))),
           channel: it.channel.toLowerCase(), format: it.format, title: it.title,
-          hook: it.hook, body: it.body, visual: it.visual, est_minutes: it.est_minutes, cta: it.cta, status: "draft", sort: i,
+          hook: it.hook, body: it.body, visual: it.visual, why: it.why, est_minutes: it.est_minutes, cta: it.cta, status: "draft", sort: i,
         })),
     );
     if (iErr) throw iErr;
@@ -207,3 +246,51 @@ Deno.serve(async (req) => {
     return json({ error: "Something broke while saving your campaign. Your brief is safe; try again." }, 500);
   }
 });
+
+// ---------- Small AI tasks used by the workspace -------------------------
+const TASK_SCHEMAS = {
+  rewrite_item: obj({ item: obj({ title: str, hook: str, body: str, cta: str }) }),
+  more_copy: obj({ lines: strArr }),
+  next_week: obj({ suggestions: strArr }),
+};
+
+const STYLE_RULES: Record<string, string> = {
+  fresh: "Write a completely fresh take: new angle, new hook, same goal and channel.",
+  shorter: "Make it about half as long. Keep the hook punchy and the call to action.",
+  spanish: "Translate naturally into Latin American Spanish. Keep names, codes and hashtags unchanged.",
+};
+
+function taskPrompt(t: Task): string {
+  const c = t.campaign;
+  const ctx = `Business: ${c.business_name}\nAudience: ${c.target_audience}\nGoal: ${c.goal}\nTone: ${c.tone ?? "warm"}\nOffer: ${c.offer ?? "none"}`;
+  if (t.task === "rewrite_item") {
+    return `${ctx}\n\n${STYLE_RULES[t.style] ?? STYLE_RULES.fresh}\nHook under 125 characters. No invented statistics or claims.\nPost to rewrite:\n${JSON.stringify(t.item)}`;
+  }
+  if (t.task === "more_copy") {
+    return `${ctx}\n\nWrite 3 new ${t.group.replace("_", " ")} in the same voice as these, without repeating them:\n${t.examples.map((e) => `- ${e}`).join("\n")}`;
+  }
+  return `${ctx}\n\nHere are the campaign results the owner logged so far:\n${JSON.stringify(t.stats)}\nGive exactly 3 short, specific, plain-English suggestions for what to change next week. Base them only on these numbers.`;
+}
+
+async function runTask(t: Task) {
+  const schema = TASK_SCHEMAS[t.task];
+  if (!schema) throw new Error("Unknown task");
+  const ai = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages: [
+        { role: "system", content: "You are Flaunt, a friendly senior marketer for small businesses. Plain English, no jargon, never mean." },
+        { role: "user", content: taskPrompt(t) },
+      ],
+      response_format: { type: "json_schema", json_schema: { name: t.task, strict: true, schema } },
+    }),
+  });
+  if (!ai.ok) {
+    console.error("OpenAI error", ai.status, await ai.text());
+    throw new Error("AI busy");
+  }
+  const aiJson = await ai.json();
+  return JSON.parse(aiJson.choices[0].message.content);
+}
