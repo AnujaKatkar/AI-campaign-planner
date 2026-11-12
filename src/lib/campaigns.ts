@@ -231,6 +231,23 @@ export async function rewriteItem(
   return data.item;
 }
 
+/**
+ * Asks the AI to draw two pictures for a post. They are saved in the user's own photo folder and come back as paths;
+ * nothing is attached to the post until the owner picks one.
+ */
+export async function generatePostImages(campaign: CampaignDetail, item: CalendarItem, instruction: string): Promise<string[]> {
+  const data = await invoke<{ paths?: unknown }>({
+    task: 'generate_image',
+    campaign_id: campaign.id,
+    campaign: { ...contextOf(campaign), business_brief: campaign.business_brief },
+    item: { channel: item.channel, format: item.format, title: item.title, hook: item.hook, visual: item.visual },
+    instruction: instruction.trim() || undefined,
+    count: 2,
+  });
+  if (!Array.isArray(data?.paths) || !data.paths.length || !data.paths.every((p) => typeof p === 'string')) throw new Error(GENERIC_ERROR);
+  return data.paths as string[];
+}
+
 export async function moreCopy(campaign: CampaignContext, group: CopyGroup, examples: string[]): Promise<string[]> {
   const data = await invoke<{ lines?: string[] }>({ task: 'more_copy', group, examples, campaign: contextOf(campaign) });
   if (!Array.isArray(data?.lines)) throw new Error(GENERIC_ERROR);

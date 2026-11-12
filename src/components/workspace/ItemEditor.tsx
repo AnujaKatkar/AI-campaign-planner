@@ -6,6 +6,7 @@ import PostPreview from '@/components/workspace/PostPreview';
 import { useToast } from '@/components/Toast';
 import {
   STATUS_LABELS,
+  generatePostImages,
   rewriteItem,
   type CalendarItem,
   type CampaignDetail,
@@ -204,7 +205,15 @@ export default function ItemEditor({ campaign, item, store, onChange, onDelete, 
           <textarea id="ed-visual" rows={2} className="field" placeholder="One sentence on what to film or photograph" {...textInput('visual')} />
         </div>
 
-        <PostPhotos photos={photosOf(item)} store={store} onChange={(media) => onChange({ media })} />
+        <PostPhotos
+          photos={photosOf(item)}
+          store={store}
+          onChange={(media) => onChange({ media })}
+          makeAi={async (instruction) => {
+            if (store.kind === 'sample') throw new Error('AI pictures are for your own campaigns. Sign in and make one to try them.');
+            return generatePostImages(campaign, { ...item, ...draft }, instruction);
+          }}
+        />
 
         <PostPreview item={{ ...item, ...draft, media: photosOf(item) }} businessName={campaign.business_name} />
 

@@ -5,6 +5,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
 const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") ?? "gpt-5-mini";
+const IMAGE_MODEL = Deno.env.get("OPENAI_IMAGE_MODEL") ?? "gpt-image-2.5-flare";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
@@ -29,6 +30,15 @@ type Brief = {
 };
 
 type CampaignContext = { business_name: string; target_audience: string; goal: string; tone?: string | null; offer?: string | null };
+
+type ImageTask = {
+  task: "generate_image";
+  campaign_id: string;
+  campaign: CampaignContext & { business_brief?: string | null };
+  item: { channel: string; format: string; title: string; hook?: string | null; visual?: string | null };
+  instruction?: string;
+  count?: number;
+};
 
 type Task =
   | { task: "rewrite_item"; style: "fresh" | "shorter" | "spanish"; campaign: CampaignContext; item: Record<string, unknown> }
@@ -168,6 +178,22 @@ Deno.serve(async (req) => {
       const { count: taskCount } = await supabase.from("generations").select("id", { count: "exact", head: true })
         .eq("user_id", user.id).neq("kind", "full_campaign").gte("created_at", since);
       if ((taskCount ?? 0) >= 200) return json({ error: "That's a lot of rewrites for one day. Try again tomorrow." }, 429);
+      if (body.task === "generate_image") {
+        // Pictures cost far more than text, so they get their own, tighter daily limit.
+        const { count: imageCount } = await supabase.from("generations").select("id", { count: "exact", head: true })
+          .eq("user_id", user.id).eq("kind", "generate_image").gte("created_at", since);
+        if ((imageCount ?? 0) >= 15) return json({ error: "That's plenty of pictures for one day. Try again tomorrow." }, 429);
+        let paths: string[];
+        try {
+          paths = await generateImages(supabase, user.id, body as ImageTask);
+        } catch (e) {
+          console.error(e);
+          const message = e instanceof Error && e.message.startsWith("bad request:") ? e.message.slice(12).trim() : "The picture maker is busy. Try again in a moment; nothing was changed.";
+          return json({ error: message }, e instanceof Error && e.message.startsWith("bad request:") ? 400 : 502);
+        }
+        await supabase.from("generations").insert({ user_id: user.id, campaign_id: null, kind: "generate_image", model: IMAGE_MODEL, latency_ms: Date.now() - t0 });
+        return json({ paths });
+      }
       let result: unknown;
       try {
         result = await runTask(body as Task);
@@ -470,4 +496,67 @@ async function runTask(t: Task) {
   }
   const aiJson = await ai.json();
   return JSON.parse(aiJson.choices[0].message.content);
+}
+
+// ---------- AI pictures for a post ---------------------------------------
+// Portrait for the vertical feeds, square for everywhere else.
+const IMAGE_SIZES: Record<string, string> = { instagram: "1024x1536", tiktok: "1024x1536" };
+
+function imagePrompt(t: ImageTask): string {
+  const clip = (v: unknown, n: number) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+  const c = t.campaign;
+  const scene = clip(t.item.visual, 400) || clip(t.item.title, 200);
+  const extra = clip(t.instruction, 300);
+  return `A photo for a small business's social media post.
+Business: ${clip(c.business_name, 80)}${c.business_brief ? `, which sells: ${clip(c.business_brief, 300)}` : ""}
+Audience: ${clip(c.target_audience, 200)}
+Mood: ${clip(c.tone, 60) || "warm, confident"}
+Post: ${clip(t.item.title, 200)}${t.item.hook ? ` ("${clip(t.item.hook, 125)}")` : ""}
+Show: ${scene}
+${extra ? `The owner also asks: ${extra}\n` : ""}Style: a natural, well-lit, real-looking photo of the kind a good phone camera takes, with a clear subject and room around it.
+Rules: no text, letters, numbers, logos or watermarks anywhere in the picture. No fake brand packaging. Nothing that promises a result or makes a claim.`;
+}
+
+/** Draws the pictures, saves them in the user's own folder of the private photo bucket, and returns their paths. */
+type PhotoStorage = { storage: { from(bucket: string): { upload(path: string, body: Uint8Array, opts: { contentType: string }): Promise<{ error: unknown }> } } };
+
+async function generateImages(supabase: PhotoStorage, userId: string, t: ImageTask): Promise<string[]> {
+  if (!/^[0-9a-f-]{36}$/i.test(t.campaign_id ?? "")) throw new Error("bad request: Make this picture from one of your own campaigns.");
+  if (!t.item?.title) throw new Error("bad request: Give the post a title first.");
+  const n = Math.min(2, Math.max(1, Math.round(Number(t.count) || 1)));
+
+  const ai = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: IMAGE_MODEL,
+      prompt: imagePrompt(t),
+      n,
+      size: IMAGE_SIZES[t.item.channel] ?? "1024x1024",
+      quality: "medium",
+      output_format: "jpeg",
+    }),
+  });
+  if (!ai.ok) {
+    const detail = await ai.text();
+    console.error("OpenAI image error", ai.status, detail);
+    // A refused prompt is the owner's to fix; everything else is ours.
+    if (ai.status === 400 && /safety|moderation|policy/i.test(detail)) {
+      throw new Error("bad request: The picture maker wouldn't draw that. Try describing it differently.");
+    }
+    throw new Error("image service error");
+  }
+  const data = await ai.json();
+  const paths: string[] = [];
+  for (const row of data.data ?? []) {
+    if (typeof row.b64_json !== "string") continue;
+    const bytes = Uint8Array.from(atob(row.b64_json), (ch) => ch.charCodeAt(0));
+    // The first folder must be the user's id: the storage policies only allow files there.
+    const path = `${userId}/${t.campaign_id}/${crypto.randomUUID()}.jpg`;
+    const { error } = await supabase.storage.from("post-media").upload(path, bytes, { contentType: "image/jpeg" });
+    if (error) throw error;
+    paths.push(path);
+  }
+  if (!paths.length) throw new Error("image service returned nothing");
+  return paths;
 }

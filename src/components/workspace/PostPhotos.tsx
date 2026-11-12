@@ -1,6 +1,7 @@
 import { useRef, useState, type DragEvent } from 'react';
 import { ChevronLeft, ChevronRight, ImagePlus, Loader2, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
+import AiPhotoPanel from '@/components/workspace/AiPhotoPanel';
 import { usePhotoUrls } from '@/hooks/usePhotoUrls';
 import type { CampaignStore, PostPhoto } from '@/lib/campaigns';
 import { MAX_PHOTOS, preparePhoto } from '@/lib/media';
@@ -10,10 +11,12 @@ type PostPhotosProps = {
   store: Pick<CampaignStore, 'kind' | 'uploadPhoto' | 'deletePhotos'>;
   /** Saves the new photo list. Resolves true once it is stored. */
   onChange: (photos: PostPhoto[]) => Promise<boolean>;
+  /** Draws AI pictures for this post; resolves with their storage paths. */
+  makeAi: (instruction: string) => Promise<string[]>;
 };
 
 /** Add, reorder and remove the photos on one post. The first photo is the cover. */
-export default function PostPhotos({ photos, store, onChange }: PostPhotosProps) {
+export default function PostPhotos({ photos, store, onChange, makeAi }: PostPhotosProps) {
   const toast = useToast();
   const input = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(0);
@@ -173,6 +176,12 @@ export default function PostPhotos({ photos, store, onChange }: PostPhotosProps)
           }}
         />
       </div>
+      <AiPhotoPanel
+        room={room}
+        make={makeAi}
+        onUse={(path) => onChange([...latest.current, { path }])}
+        discard={(paths) => store.deletePhotos(paths)}
+      />
       {store.kind === 'sample' && photos.length > 0 && (
         <p className="mt-1.5 text-xs text-muted">Sample photos stay in this browser only. Sign in and make your own campaign to keep them.</p>
       )}
