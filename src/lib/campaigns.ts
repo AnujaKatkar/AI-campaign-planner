@@ -1,5 +1,6 @@
 import { signOut, supabase, supabaseConfigured } from '@/lib/supabase';
 import { todayIso } from '@/lib/schedule';
+import { MEDIA_BUCKET, isInlinePhoto } from '@/lib/media';
 
 export type Goal = 'awareness' | 'leads' | 'sales' | 'launch' | 'event' | 'retention';
 export type Workload = 'light' | 'steady' | 'allin';
@@ -48,6 +49,9 @@ export const STATUS_LABELS: Record<ItemStatus, string> = {
   done: 'Posted',
 };
 
+/** One photo on a post. `path` is a file in the post-media bucket, or a data URL in the sample campaign. */
+export type PostPhoto = { path: string };
+
 export type CalendarItem = {
   id: string;
   phase_id: string | null;
@@ -66,6 +70,8 @@ export type CalendarItem = {
   clicks: number | null;
   conversions: number | null;
   sort: number;
+  /** Photos in posting order; the first is the cover. Missing on posts saved before photos existed. */
+  media?: PostPhoto[];
 };
 
 export type Idea = { title: string; description: string; channel: string; format: string };
@@ -140,6 +146,10 @@ export type CampaignStore = {
   updateAsset: (id: string, patch: { kept?: boolean; content?: unknown; title?: string | null }) => Promise<void>;
   createAsset: (asset: NewAsset) => Promise<Asset>;
   deleteAsset: (id: string) => Promise<void>;
+  /** Stores a prepared photo and returns the path to keep in the post's `media`. */
+  uploadPhoto: (photo: Blob) => Promise<string>;
+  /** Removes stored photo files. Best effort: a leftover file is harmless. */
+  deletePhotos: (paths: string[]) => Promise<void>;
 };
 
 export type NewAsset = Omit<Extract<Asset, { kind: 'ad_script' }>, 'id'>;
@@ -221,6 +231,23 @@ export async function rewriteItem(
   return data.item;
 }
 
+/**
+ * Asks the AI to draw two pictures for a post. They are saved in the user's own photo folder and come back as paths;
+ * nothing is attached to the post until the owner picks one.
+ */
+export async function generatePostImages(campaign: CampaignDetail, item: CalendarItem, instruction: string): Promise<string[]> {
+  const data = await invoke<{ paths?: unknown }>({
+    task: 'generate_image',
+    campaign_id: campaign.id,
+    campaign: { ...contextOf(campaign), business_brief: campaign.business_brief },
+    item: { channel: item.channel, format: item.format, title: item.title, hook: item.hook, visual: item.visual },
+    instruction: instruction.trim() || undefined,
+    count: 2,
+  });
+  if (!Array.isArray(data?.paths) || !data.paths.length || !data.paths.every((p) => typeof p === 'string')) throw new Error(GENERIC_ERROR);
+  return data.paths as string[];
+}
+
 export async function moreCopy(campaign: CampaignContext, group: CopyGroup, examples: string[]): Promise<string[]> {
   const data = await invoke<{ lines?: string[] }>({ task: 'more_copy', group, examples, campaign: contextOf(campaign) });
   if (!Array.isArray(data?.lines)) throw new Error(GENERIC_ERROR);
@@ -271,7 +298,7 @@ export async function briefChat(payload: Record<string, unknown>): Promise<{ rep
 }
 
 const ITEM_COLUMNS =
-  'id, phase_id, scheduled_on, channel, format, est_minutes, title, hook, body, cta, visual, why, status, reach, clicks, conversions, sort';
+  'id, phase_id, scheduled_on, channel, format, est_minutes, title, hook, body, cta, visual, why, status, reach, clicks, conversions, sort, media';
 
 export async function getCampaignDetail(id: string): Promise<CampaignDetail> {
   const [campaignRes, phasesRes, itemsRes, assetsRes] = await Promise.all([
@@ -338,6 +365,20 @@ export function remoteStore(campaignId: string): CampaignStore {
     async deleteAsset(id) {
       const { error } = await supabase.from('campaign_assets').delete().eq('id', id);
       if (error) throw new Error(SAVE_ERROR);
+    },
+    async uploadPhoto(photo) {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id;
+      if (!userId) throw new Error('Sign in to add photos. Your post stays right where it is.');
+      // The first folder must be the user's id: the storage policies only allow files there.
+      const path = `${userId}/${campaignId}/${crypto.randomUUID()}.jpg`;
+      const { error } = await supabase.storage.from(MEDIA_BUCKET).upload(path, photo, { contentType: 'image/jpeg' });
+      if (error) throw new Error("Couldn't upload that photo. Check your connection and try again.");
+      return path;
+    },
+    async deletePhotos(paths) {
+      const stored = paths.filter((p) => !isInlinePhoto(p));
+      if (stored.length) await supabase.storage.from(MEDIA_BUCKET).remove(stored);
     },
   };
 }

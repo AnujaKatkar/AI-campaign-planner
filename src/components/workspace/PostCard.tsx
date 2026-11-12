@@ -1,7 +1,9 @@
-import { AlertTriangle, Check, Clock } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Images } from 'lucide-react';
 import ChannelChip from '@/components/ChannelChip';
+import { usePhotoUrls } from '@/hooks/usePhotoUrls';
 import { STATUS_LABELS, type CalendarItem } from '@/lib/campaigns';
 import { flauntCheck } from '@/lib/check';
+import { photosOf } from '@/lib/media';
 import { postTypeFor } from '@/lib/postTypes';
 import { formatDayLabel } from '@/lib/schedule';
 
@@ -15,6 +17,9 @@ export default function PostCard({ item, onToggle, onOpen }: PostCardProps) {
   const done = item.status === 'done';
   const issues = done ? [] : flauntCheck(item);
   const type = postTypeFor(item.format);
+  const photos = photosOf(item);
+  const cover = photos[0]?.path;
+  const { urls } = usePhotoUrls(cover ? [cover] : []);
 
   return (
     <li className={`card group flex items-start gap-4 p-4 transition-colors sm:p-5 ${done ? '!bg-blush/50' : 'hover:border-muted'}`}>
@@ -58,6 +63,23 @@ export default function PostCard({ item, onToggle, onOpen }: PostCardProps) {
         </button>
         {item.hook && <p className="mt-1 text-muted">&ldquo;{item.hook}&rdquo;</p>}
       </div>
+
+      {cover && (
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`Open ${item.title} (${photos.length} photo${photos.length > 1 ? 's' : ''})`}
+          className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-line bg-blush sm:h-20 sm:w-20"
+        >
+          {urls[cover] && <img src={urls[cover]} alt="" className={`h-full w-full object-cover ${done ? 'opacity-60' : ''}`} />}
+          {photos.length > 1 && (
+            <span className="pill absolute bottom-1 right-1 bg-ink/80 !px-1.5 text-cream">
+              <Images className="h-3 w-3" aria-hidden />
+              {photos.length}
+            </span>
+          )}
+        </button>
+      )}
     </li>
   );
 }
