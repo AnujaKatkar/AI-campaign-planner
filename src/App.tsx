@@ -5,13 +5,15 @@ import BriefWizard from '@/pages/BriefWizard';
 import CampaignLibrary from '@/pages/CampaignLibrary';
 import CampaignWorkspace, { type WorkspaceSource } from '@/pages/CampaignWorkspace';
 import HowItWorks from '@/pages/HowItWorks';
+import SamplePicker from '@/pages/SamplePicker';
 import SiteHeader from '@/components/SiteHeader';
 import SiteFooter from '@/components/SiteFooter';
 import { ToastProvider } from '@/components/Toast';
 import { useSession } from '@/hooks/useSession';
+import type { SampleId } from '@/lib/sample';
 import { openedFromPasswordReset, signOut } from '@/lib/supabase';
 
-type Screen = 'landing' | 'auth' | 'brief' | 'library' | 'campaign' | 'how';
+type Screen = 'landing' | 'auth' | 'brief' | 'library' | 'campaign' | 'how' | 'samples';
 
 function App() {
   const { session, loading } = useSession();
@@ -47,8 +49,8 @@ function App() {
     go('campaign');
   }
 
-  function openSample() {
-    setSource({ kind: 'sample' });
+  function openSample(id: SampleId = 'coffee') {
+    setSource({ kind: 'sample', id });
     setJustCreated(false);
     go('campaign');
   }
@@ -77,7 +79,7 @@ function App() {
         />
         <main id="main" className="flex-1">
           {screen === 'landing' && (
-            <Landing signedIn={!!session} onStart={() => go('brief')} onSample={openSample} onSignIn={() => requireSignIn('library')} />
+            <Landing signedIn={!!session} onStart={() => go('brief')} onSample={() => go('samples')} onSignIn={() => requireSignIn('library')} />
           )}
           {screen === 'auth' && (
             <AuthPage
@@ -104,18 +106,22 @@ function App() {
               onExit={() => go(session ? 'library' : 'landing')}
             />
           )}
-          {screen === 'library' && <CampaignLibrary onStart={() => go('brief')} onSample={openSample} onOpen={(id) => openCampaign(id)} />}
+          {screen === 'library' && <CampaignLibrary onStart={() => go('brief')} onSample={() => go('samples')} onOpen={(id) => openCampaign(id)} />}
           {screen === 'campaign' && source && (
             <CampaignWorkspace
-              key={source.kind === 'remote' ? source.id : 'sample'}
+              key={source.kind === 'remote' ? source.id : `sample-${source.id}`}
               source={source}
               celebrateOnOpen={justCreated}
               onBack={() => go(source.kind === 'sample' ? (session ? 'library' : 'landing') : 'library')}
               onHowItWorks={() => go('how')}
               onStartOwn={() => go('brief')}
+              onMoreSamples={() => go('samples')}
             />
           )}
-          {screen === 'how' && <HowItWorks onBack={() => go(previous === 'how' ? 'landing' : previous)} onSample={openSample} />}
+          {screen === 'how' && <HowItWorks onBack={() => go(previous === 'how' ? 'landing' : previous)} onSample={() => openSample('coffee')} />}
+          {screen === 'samples' && (
+            <SamplePicker onBack={() => go(previous === 'samples' ? 'landing' : previous)} onOpen={(id) => openSample(id)} onStart={() => go('brief')} />
+          )}
         </main>
         <SiteFooter onBehindTheBuild={() => go('how')} />
       </div>

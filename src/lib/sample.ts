@@ -2,9 +2,18 @@ import { blobToDataUrl } from '@/lib/media';
 import type { Asset, CalendarItem, CampaignDetail, CampaignStore, ItemStatus, Phase } from '@/lib/campaigns';
 import { postTypeFor } from '@/lib/postTypes';
 import { addDaysIso, todayIso } from '@/lib/schedule';
+import { BOOKKEEPER } from '@/lib/samples/bookkeeper';
+import { BOUTIQUE } from '@/lib/samples/boutique';
+import { PLUMBER } from '@/lib/samples/plumber';
+import { SALON } from '@/lib/samples/salon';
+import { YOGA } from '@/lib/samples/yoga';
+import type { SampleId, SampleMeta, SampleSpec } from '@/lib/sampleTypes';
 
-// The sample campaign lives only in this browser. Its results numbers are made-up examples.
-const STORAGE_KEY = 'flaunt.sample.v2';
+export type { SampleId, SampleMeta } from '@/lib/sampleTypes';
+
+// Each sample campaign lives only in this browser. Its results numbers are made-up examples.
+// The coffee sample keeps its original key so anyone who already opened it keeps their changes.
+const storageKey = (id: SampleId) => (id === 'coffee' ? 'flaunt.sample.v2' : `flaunt.sample.${id}.v1`);
 
 type Post = [title: string, format: string, hook: string, body: string, visual: string, why: string];
 
@@ -61,7 +70,7 @@ const LOGGED: Record<string, [number, number, number]> = {
   ig4: [0, 980, 31], tt4: [7, 5880, 120],
 };
 
-function buildSample(): CampaignDetail {
+function buildCoffee(): CampaignDetail {
   const start = addDaysIso(todayIso(), -17);
   const phases: Phase[] = PHASES.map(([name, objective, from, to], i) => ({
     id: `phase-${i}`,
@@ -261,28 +270,126 @@ function buildSample(): CampaignDetail {
   };
 }
 
-export function loadSample(): CampaignDetail {
+const COFFEE_META: SampleMeta = {
+  id: 'coffee',
+  label: 'Coffee roaster',
+  business: 'Ember & Oak Coffee Roasters',
+  goalLabel: 'First orders',
+  channels: ['instagram', 'tiktok', 'email', 'google'],
+  blurb: 'Launch a fresh-roasted coffee subscription with a six-week, four-channel plan.',
+};
+
+const SPECS: SampleSpec[] = [YOGA, SALON, PLUMBER, BOUTIQUE, BOOKKEEPER];
+
+/** The example businesses, in the order the picker shows them. */
+export const SAMPLE_LIST: SampleMeta[] = [COFFEE_META, ...SPECS.map((spec) => spec.meta)];
+
+export function isSampleId(value: unknown): value is SampleId {
+  return SAMPLE_LIST.some((m) => m.id === value);
+}
+
+/** Turns a compact example into a full campaign. The campaign began 11 days ago, so today falls in week 2. */
+function buildFromSpec(spec: SampleSpec): CampaignDetail {
+  const start = addDaysIso(todayIso(), -11);
+  const phases: Phase[] = spec.phases.map(([name, objective, from, to], i) => ({
+    id: `phase-${i}`,
+    name,
+    objective,
+    starts_on: addDaysIso(start, from),
+    ends_on: addDaysIso(start, to),
+  }));
+  const phaseFor = (day: number) => phases[spec.phases.findIndex(([, , from, to]) => day >= from && day <= to)]?.id ?? null;
+
+  const posts = [...spec.posts].sort((a, b) => a[0] - b[0]);
+  const items: CalendarItem[] = posts.map(([day, channel, title, format, hook, body, visual, why, cta], index) => {
+    const status: ItemStatus = day <= 8 ? 'done' : day >= 25 ? 'idea' : day <= 10 ? 'ready' : 'draft';
+    const result = status === 'done' ? spec.logged[index] : undefined;
+    return {
+      id: `item-${index}`,
+      phase_id: phaseFor(day),
+      scheduled_on: addDaysIso(start, day),
+      channel,
+      format,
+      est_minutes: postTypeFor(format).minutes,
+      title,
+      hook,
+      body,
+      cta: cta ?? spec.defaultCta[channel] ?? 'Learn more',
+      visual,
+      why,
+      status,
+      reach: result ? result[1] : null,
+      clicks: result ? result[2] : null,
+      conversions: result ? result[0] : null,
+      sort: index,
+    };
+  });
+
+  const assets: Asset[] = [
+    ...spec.ideas.map(([title, description, channel, format], i): Asset => ({
+      id: `idea-${i}`,
+      kind: 'idea',
+      title,
+      content: { title, description, channel, format },
+      kept: true,
+    })),
+    ...spec.scripts.map((script, i): Asset => ({ id: `script-${i}`, kind: 'ad_script', title: script.title, content: script, kept: true })),
+    { id: 'copy', kind: 'copy', title: 'Campaign copy', content: spec.copy, kept: true },
+    { id: 'brief', kind: 'creative_brief', title: 'Creative brief', content: spec.brief, kept: true },
+  ];
+
+  return {
+    id: `sample-${spec.meta.id}`,
+    name: spec.name,
+    big_idea: spec.big_idea,
+    tagline: spec.tagline,
+    business_name: spec.business_name,
+    business_brief: spec.business_brief,
+    target_audience: spec.target_audience,
+    goal: spec.goal,
+    offer: spec.offer,
+    start_date: start,
+    duration_weeks: spec.duration_weeks,
+    channels: spec.channels,
+    tone: spec.tone,
+    workload: 'steady',
+    story_recipe: spec.story_recipe,
+    goal_label: spec.goal_label,
+    goal_target: spec.goal_target,
+    status: 'active',
+    phases,
+    items,
+    assets,
+  };
+}
+
+function buildSample(id: SampleId): CampaignDetail {
+  const spec = SPECS.find((s) => s.meta.id === id);
+  return spec ? buildFromSpec(spec) : buildCoffee();
+}
+
+export function loadSample(id: SampleId = 'coffee'): CampaignDetail {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = localStorage.getItem(storageKey(id));
     if (saved) return JSON.parse(saved) as CampaignDetail;
   } catch {
     // Fall through to a fresh sample.
   }
-  return buildSample();
+  return buildSample(id);
 }
 
-export function resetSample(): CampaignDetail {
+export function resetSample(id: SampleId = 'coffee'): CampaignDetail {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKey(id));
   } catch {
     // Nothing saved to clear.
   }
-  return buildSample();
+  return buildSample(id);
 }
 
-export function saveSample(campaign: CampaignDetail) {
+export function saveSample(campaign: CampaignDetail, id: SampleId = 'coffee') {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(campaign));
+    localStorage.setItem(storageKey(id), JSON.stringify(campaign));
   } catch {
     // Storage full or blocked: changes still show for this visit.
   }
