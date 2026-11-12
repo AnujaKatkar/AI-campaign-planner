@@ -6,9 +6,11 @@ type DrawerProps = {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** What the close button is called for screen readers. */
+  closeLabel?: string;
 };
 
-export default function Drawer({ title, onClose, children, footer }: DrawerProps) {
+export default function Drawer({ title, onClose, children, footer, closeLabel = 'Close editor' }: DrawerProps) {
   const panel = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,7 +39,7 @@ export default function Drawer({ title, onClose, children, footer }: DrawerProps
       >
         <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
           <h2 className="truncate text-xl font-extrabold">{title}</h2>
-          <button type="button" onClick={onClose} className="btn-soft !px-2" aria-label="Close editor">
+          <button type="button" onClick={onClose} className="btn-soft !px-2" aria-label={closeLabel}>
             <X className="h-5 w-5" aria-hidden />
           </button>
         </div>

@@ -9,6 +9,7 @@ import CopyTab from '@/components/workspace/CopyTab';
 import IdeasTab, { type IdeaAsset } from '@/components/workspace/IdeasTab';
 import ItemEditor from '@/components/workspace/ItemEditor';
 import PhaseRibbon from '@/components/workspace/PhaseRibbon';
+import PostNowSheet from '@/components/workspace/PostNowSheet';
 import RecapModal from '@/components/workspace/RecapModal';
 import ResultsTab from '@/components/workspace/ResultsTab';
 import ScriptsTab from '@/components/workspace/ScriptsTab';
@@ -70,6 +71,7 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
   const [weekIndex, setWeekIndex] = useState(() => (campaign ? currentWeekIndex(campaign.start_date, campaign.duration_weeks) : 0));
   const [tab, setTab] = useState<Tab>('calendar');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [postingId, setPostingId] = useState<string | null>(null);
   const [showRecap, setShowRecap] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantFocus, setAssistantFocus] = useState<string | null>(null);
@@ -368,6 +370,7 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
   const weekDone = thisWeekItems.filter((item) => item.status === 'done').length;
   const ended = todayIso() > addDaysIso(campaign.start_date, campaign.duration_weeks * 7 - 1);
   const editing = campaign.items.find((i) => i.id === editingId);
+  const posting = campaign.items.find((i) => i.id === postingId);
   const activeTab = TABS.find((t) => t.id === tab)!;
 
   function toggleItem(item: CalendarItem) {
@@ -485,6 +488,7 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
             onMove={(item, iso) => updateItem(item.id, { scheduled_on: iso })}
             onStatus={(item, status: ItemStatus) => updateItem(item.id, { status })}
             onAdd={addItem}
+            onPostNow={(item) => setPostingId(item.id)}
             onHowItWorks={onHowItWorks}
           />
         )}
@@ -525,6 +529,20 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
           }}
         />
       )}
+      {posting && (
+        <PostNowSheet
+          item={posting}
+          onClose={() => setPostingId(null)}
+          onEdit={() => {
+            setPostingId(null);
+            setEditingId(posting.id);
+          }}
+          onPosted={async () => {
+            if (await updateItem(posting.id, { status: 'done' })) setPostingId(null);
+          }}
+          onUndo={() => void updateItem(posting.id, { status: 'draft' })}
+        />
+      )}
       {assistantOpen && (
         <AssistantPanel
           campaign={campaign}
@@ -540,7 +558,7 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
           onClose={() => setAssistantOpen(false)}
         />
       )}
-      {!assistantOpen && !editing && !showRecap && (
+      {!assistantOpen && !editing && !posting && !showRecap && (
         <button
           type="button"
           onClick={() => {
