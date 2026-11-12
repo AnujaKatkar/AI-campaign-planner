@@ -3,6 +3,7 @@ import { CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, Download, FileSpr
 import BoardView from '@/components/workspace/BoardView';
 import MonthGrid from '@/components/workspace/MonthGrid';
 import PostCard from '@/components/workspace/PostCard';
+import TodayStrip from '@/components/workspace/TodayStrip';
 import CopyButton from '@/components/CopyButton';
 import type { CalendarItem, CampaignDetail, ItemStatus } from '@/lib/campaigns';
 import { channelMeta } from '@/lib/channels';
@@ -21,6 +22,7 @@ type CalendarViewProps = {
   onMove: (item: CalendarItem, iso: string) => void;
   onStatus: (item: CalendarItem, status: ItemStatus) => void;
   onAdd: (iso: string) => void;
+  onPostNow: (item: CalendarItem) => void;
   onHowItWorks: () => void;
 };
 
@@ -42,6 +44,7 @@ export default function CalendarView({
   onMove,
   onStatus,
   onAdd,
+  onPostNow,
   onHowItWorks,
 }: CalendarViewProps) {
   const narrow = useMediaQuery('(max-width: 639px)');
@@ -84,6 +87,8 @@ export default function CalendarView({
           <ExportMenu campaign={campaign} />
         </div>
       </div>
+
+      <TodayStrip items={campaign.items} onPostNow={onPostNow} onOpen={onOpen} />
 
       {mode === 'week' && (
         <div className="mt-6">
@@ -147,7 +152,7 @@ export default function CalendarView({
           ) : (
             <ul className="mt-4 flex flex-col gap-3">
               {thisWeek.map((item) => (
-                <PostCard key={item.id} item={item} onToggle={() => onToggle(item)} onOpen={() => onOpen(item)} />
+                <PostCard key={item.id} item={item} onToggle={() => onToggle(item)} onOpen={() => onOpen(item)} onPostNow={() => onPostNow(item)} />
               ))}
             </ul>
           )}
@@ -186,7 +191,7 @@ export default function CalendarView({
                   </h3>
                   <ul className="mt-3 flex flex-col gap-3">
                     {itemsByWeek(index).map((item) => (
-                      <PostCard key={item.id} item={item} onToggle={() => onToggle(item)} onOpen={() => onOpen(item)} />
+                      <PostCard key={item.id} item={item} onToggle={() => onToggle(item)} onOpen={() => onOpen(item)} onPostNow={() => onPostNow(item)} />
                     ))}
                   </ul>
                 </div>

@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Clock, Images } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Images, Send } from 'lucide-react';
 import ChannelChip from '@/components/ChannelChip';
 import { usePhotoUrls } from '@/hooks/usePhotoUrls';
 import { STATUS_LABELS, type CalendarItem } from '@/lib/campaigns';
@@ -11,9 +11,10 @@ type PostCardProps = {
   item: CalendarItem;
   onToggle: () => void;
   onOpen: () => void;
+  onPostNow?: () => void;
 };
 
-export default function PostCard({ item, onToggle, onOpen }: PostCardProps) {
+export default function PostCard({ item, onToggle, onOpen, onPostNow }: PostCardProps) {
   const done = item.status === 'done';
   const issues = done ? [] : flauntCheck(item);
   const type = postTypeFor(item.format);
@@ -62,6 +63,11 @@ export default function PostCard({ item, onToggle, onOpen }: PostCardProps) {
           {item.title}
         </button>
         {item.hook && <p className="mt-1 text-muted">&ldquo;{item.hook}&rdquo;</p>}
+        {onPostNow && !done && item.status !== 'idea' && (
+          <button type="button" onClick={onPostNow} className="btn-soft mt-3 !border-teal/40" aria-label={`Post now: ${item.title}`}>
+            <Send className="h-4 w-4 text-teal" aria-hidden /> Post now
+          </button>
+        )}
       </div>
 
       {cover && (
