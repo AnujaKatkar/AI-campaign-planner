@@ -35,11 +35,11 @@ import { celebrate } from '@/lib/confetti';
 import { phaseForDate } from '@/lib/phases';
 import { postTypeFor } from '@/lib/postTypes';
 import { heatPercent } from '@/lib/results';
-import { loadSample, resetSample, sampleStore, saveSample } from '@/lib/sample';
+import { loadSample, resetSample, sampleStore, saveSample, type SampleId } from '@/lib/sample';
 import { photosOf } from '@/lib/media';
 import { addDaysIso, currentWeekIndex, todayIso, weekIndexFor } from '@/lib/schedule';
 
-export type WorkspaceSource = { kind: 'remote'; id: string; userId?: string } | { kind: 'sample' };
+export type WorkspaceSource = { kind: 'remote'; id: string; userId?: string } | { kind: 'sample'; id: SampleId };
 
 type CampaignWorkspaceProps = {
   source: WorkspaceSource;
@@ -47,6 +47,7 @@ type CampaignWorkspaceProps = {
   onBack: () => void;
   onHowItWorks: () => void;
   onStartOwn: () => void;
+  onMoreSamples?: () => void;
 };
 
 type Tab = 'calendar' | 'results' | 'ideas' | 'scripts' | 'copy' | 'brief';
@@ -62,10 +63,11 @@ const TABS: { id: Tab; label: string; blurb: string }[] = [
 
 type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' };
 
-export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onHowItWorks, onStartOwn }: CampaignWorkspaceProps) {
+export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onHowItWorks, onStartOwn, onMoreSamples }: CampaignWorkspaceProps) {
   const toast = useToast();
   const isSample = source.kind === 'sample';
-  const [campaign, setCampaign] = useState<CampaignDetail | null>(() => (isSample ? loadSample() : null));
+  const sampleId: SampleId = source.kind === 'sample' ? source.id : 'coffee';
+  const [campaign, setCampaign] = useState<CampaignDetail | null>(() => (isSample ? loadSample(sampleId) : null));
   const [load, setLoad] = useState<LoadState>(isSample ? { status: 'ready' } : { status: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
   const [weekIndex, setWeekIndex] = useState(() => (campaign ? currentWeekIndex(campaign.start_date, campaign.duration_weeks) : 0));
@@ -75,7 +77,8 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
   const [showRecap, setShowRecap] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantFocus, setAssistantFocus] = useState<string | null>(null);
-  const chatKey = `flaunt.askChat.${source.kind === 'remote' ? source.id : 'sample'}`;
+  // The coffee sample keeps the original key so earlier chats survive.
+  const chatKey = `flaunt.askChat.${source.kind === 'remote' ? source.id : sampleId === 'coffee' ? 'sample' : `sample-${sampleId}`}`;
   const [chat, setChat] = useState<ChatMessage[]>(() => loadChat(chatKey));
   const campaignRef = useRef(campaign);
   campaignRef.current = campaign;
@@ -107,8 +110,8 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
   }, [userId]);
 
   useEffect(() => {
-    if (isSample && campaign) saveSample(campaign);
-  }, [isSample, campaign]);
+    if (isSample && campaign) saveSample(campaign, sampleId);
+  }, [isSample, campaign, sampleId]);
 
   useEffect(() => {
     try {
@@ -388,7 +391,7 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
               type="button"
               className="btn-soft"
               onClick={() => {
-                const fresh = resetSample();
+                const fresh = resetSample(sampleId);
                 setChat([]);
                 setCampaign(fresh);
                 setWeekIndex(currentWeekIndex(fresh.start_date, fresh.duration_weeks));
@@ -397,6 +400,11 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
             >
               <RotateCcw className="h-3.5 w-3.5" aria-hidden /> Reset
             </button>
+            {onMoreSamples && (
+              <button type="button" className="btn-soft" onClick={onMoreSamples}>
+                Other examples
+              </button>
+            )}
             <button type="button" className="btn-press btn-sm" onClick={onStartOwn}>
               Flaunt your own
             </button>
