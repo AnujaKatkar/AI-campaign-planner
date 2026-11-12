@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Languages, Lightbulb, Loader2, MessageCircle, Scissors, Sparkles, Trash2 } from 'lucide-react';
 import Drawer from '@/components/Drawer';
+import PostPhotos from '@/components/workspace/PostPhotos';
+import PostPreview from '@/components/workspace/PostPreview';
 import { useToast } from '@/components/Toast';
 import {
   STATUS_LABELS,
   rewriteItem,
   type CalendarItem,
   type CampaignDetail,
+  type CampaignStore,
   type ItemPatch,
   type ItemStatus,
   type RewriteStyle,
@@ -14,12 +17,15 @@ import {
 import { CHANNEL_META } from '@/lib/channels';
 import { flauntCheck } from '@/lib/check';
 import { RESULT_HINTS, goalLabelFor } from '@/lib/goals';
+import { photosOf } from '@/lib/media';
 import { postTypesUsed } from '@/lib/postTypes';
 
 type ItemEditorProps = {
   campaign: CampaignDetail;
   item: CalendarItem;
-  onChange: (patch: ItemPatch) => void;
+  store: Pick<CampaignStore, 'kind' | 'uploadPhoto' | 'deletePhotos'>;
+  /** Saves the change. Resolves true once it is stored, false if it was rolled back. */
+  onChange: (patch: ItemPatch) => Promise<boolean>;
   onDelete: () => void;
   onClose: () => void;
   onAsk: () => void;
@@ -34,7 +40,7 @@ const REWRITES: { style: RewriteStyle; label: string; icon: typeof Sparkles }[] 
   { style: 'spanish', label: 'En español', icon: Languages },
 ];
 
-export default function ItemEditor({ campaign, item, onChange, onDelete, onClose, onAsk }: ItemEditorProps) {
+export default function ItemEditor({ campaign, item, store, onChange, onDelete, onClose, onAsk }: ItemEditorProps) {
   const toast = useToast();
   const [draft, setDraft] = useState(item);
   const [rewriting, setRewriting] = useState<RewriteStyle | null>(null);
@@ -197,6 +203,10 @@ export default function ItemEditor({ campaign, item, onChange, onDelete, onClose
           </label>
           <textarea id="ed-visual" rows={2} className="field" placeholder="One sentence on what to film or photograph" {...textInput('visual')} />
         </div>
+
+        <PostPhotos photos={photosOf(item)} store={store} onChange={(media) => onChange({ media })} />
+
+        <PostPreview item={{ ...item, ...draft, media: photosOf(item) }} businessName={campaign.business_name} />
 
         <div>
           <span className="label">Rewrite with AI</span>

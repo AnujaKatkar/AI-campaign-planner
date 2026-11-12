@@ -35,6 +35,7 @@ import { phaseForDate } from '@/lib/phases';
 import { postTypeFor } from '@/lib/postTypes';
 import { heatPercent } from '@/lib/results';
 import { loadSample, resetSample, sampleStore, saveSample } from '@/lib/sample';
+import { photosOf } from '@/lib/media';
 import { addDaysIso, currentWeekIndex, todayIso, weekIndexFor } from '@/lib/schedule';
 
 export type WorkspaceSource = { kind: 'remote'; id: string; userId?: string } | { kind: 'sample' };
@@ -118,14 +119,16 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
 
   const apply = useCallback((fn: (c: CampaignDetail) => CampaignDetail) => setCampaign((c) => (c ? fn(c) : c)), []);
 
-  /** Optimistic save: update the screen now, roll back if the database says no. */
-  async function save(run: () => Promise<unknown>, rollback: CampaignDetail, message = 'Saved') {
+  /** Optimistic save: update the screen now, roll back if the database says no. Resolves true when it was stored. */
+  async function save(run: () => Promise<unknown>, rollback: CampaignDetail, message = 'Saved'): Promise<boolean> {
     try {
       await run();
       if (message) toast(message);
+      return true;
     } catch (err) {
       setCampaign(rollback);
       toast(err instanceof Error ? err.message : GENERIC_ERROR, 'error');
+      return false;
     }
   }
 
@@ -151,15 +154,15 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
     return false;
   }
 
-  function updateItem(id: string, patch: ItemPatch) {
+  function updateItem(id: string, patch: ItemPatch): Promise<boolean> {
     const before = campaignRef.current;
-    if (!before) return;
+    if (!before) return Promise.resolve(false);
     const fullPatch: ItemPatch = { ...patch };
     if (patch.scheduled_on) fullPatch.phase_id = phaseForDate(before.phases, patch.scheduled_on)?.id ?? null;
     const after = { ...before, items: before.items.map((i) => (i.id === id ? { ...i, ...fullPatch } : i)) };
     setCampaign(after);
     const celebrated = patch.status ? celebrateProgress(before, after) : false;
-    save(() => store.updateItem(id, fullPatch), before, celebrated ? '' : 'Saved');
+    return save(() => store.updateItem(id, fullPatch), before, celebrated ? '' : 'Saved');
   }
 
   async function addItem(iso: string, seed?: Partial<CalendarItem>) {
@@ -200,7 +203,10 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
     if (!before) return;
     setEditingId(null);
     setCampaign({ ...before, items: before.items.filter((i) => i.id !== id) });
-    save(() => store.deleteItem(id), before, 'Gone. Never liked it anyway.');
+    const photoPaths = photosOf(before.items.find((i) => i.id === id) ?? {}).map((p) => p.path);
+    save(() => store.deleteItem(id), before, 'Gone. Never liked it anyway.').then((deleted) => {
+      if (deleted && photoPaths.length) store.deletePhotos(photoPaths).catch(() => undefined);
+    });
   }
 
   function updateCampaign(patch: Partial<Campaign>) {
@@ -508,6 +514,7 @@ export default function CampaignWorkspace({ source, celebrateOnOpen, onBack, onH
         <ItemEditor
           campaign={campaign}
           item={editing}
+          store={store}
           onChange={(patch) => updateItem(editing.id, patch)}
           onDelete={() => deleteItem(editing.id)}
           onClose={() => setEditingId(null)}

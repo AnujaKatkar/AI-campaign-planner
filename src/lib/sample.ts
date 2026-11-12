@@ -1,3 +1,4 @@
+import { blobToDataUrl } from '@/lib/media';
 import type { Asset, CalendarItem, CampaignDetail, CampaignStore, ItemStatus, Phase } from '@/lib/campaigns';
 import { postTypeFor } from '@/lib/postTypes';
 import { addDaysIso, todayIso } from '@/lib/schedule';
@@ -297,4 +298,7 @@ export const sampleStore: CampaignStore = {
   createItem: async (item) => ({ ...item, id: `item-${Date.now()}` }),
   createAsset: async (asset) => ({ ...asset, id: `asset-${Date.now()}` }),
   deleteAsset: async () => {},
+  // The sample has no backend, so its photos live inside the saved sample itself.
+  uploadPhoto: (photo) => blobToDataUrl(photo),
+  deletePhotos: async () => {},
 };
